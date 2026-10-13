@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from . import ledger
 from .database import ConflictError, Database
 from .export import excel
+from .identity import instance_id
 from .images import MAX_UPLOAD, check_photos, embed_photos, restore_photos, store_image
 from .models import ClearInput, OrderInput, ProgressInput, StyleInput, TransactionInput, today
 
@@ -63,7 +64,7 @@ def create_app(data_dir: Path | None = None, images_dir: Path | None = None, fro
 
     @app.get('/api/health')
     def health():
-        return {'status': 'ok', 'storage': 'sqlite', 'mode': 'local'}
+        return {'status': 'ok', 'storage': 'sqlite', 'mode': 'local', 'project': 'stitch-ledger', 'instance': instance_id(ROOT, data_dir, images_dir)}
 
     @app.get('/api/ledger')
     def get_ledger():

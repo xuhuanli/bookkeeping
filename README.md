@@ -2,6 +2,31 @@
 
 FastAPI + Vue 3 + SQLite。电脑保存数据，手机通过同一局域网访问；不需要外网部署、账号或云数据库。安装依赖时需要联网，安装后使用页面、API、图片和导出都不依赖外部服务。
 
+## Mac 一键启动（包括 2017 款 Intel MacBook Pro）
+
+在 Finder 中打开项目文件夹，双击 **`启动针线小账.command`**。会打开终端，自动准备环境、启动服务并打开电脑上的网页。手机连同一个 Wi-Fi，输入终端打印的手机访问地址即可。保留启动窗口，按 `Ctrl+C` 停止服务。
+
+- 自动检测系统版本和 Intel / Apple Silicon 芯片，不需要手动选择安装包。
+- macOS 13 自动使用项目内的 uv 准备 Python 3.12；macOS 12 提供项目内的 `realpath` 兼容辅助程序。无需先安装 Homebrew，也不需要管理员密码。uv 官方支持 macOS 13，并说明 macOS 12 可在安装 `realpath` 后使用，见 [uv 平台说明](https://docs.astral.sh/uv/reference/policies/platforms/)。
+- macOS 11 及更早版本尝试使用已经安装的 Python 3.10+；缺少时会明确显示当前版本和安装指引。低于 macOS 11 时，请携带已构建的 `frontend/dist`，无需在旧系统上构建新版前端。
+- 首次准备需要联网，下载运行环境及依赖；之后没有源码或依赖变动时可直接使用本机缓存启动。Python 由 [uv 管理](https://docs.astral.sh/uv/concepts/python-versions/)，不更改系统 Python。
+- 有可用的 `frontend/dist` 时直接使用静态页面；需要构建时，检测符合版本及芯片的 Node.js，没有则从官方下载安装到项目内并校验 SHA-256。使用的 Node.js 22 Intel 安装包要求 macOS 11 以上，见 [官方平台说明](https://github.com/nodejs/node/blob/v22.23.0/BUILDING.md#platform-list)。
+- 运行环境和下载缓存位于 `.runtime`，按芯片分开保存，不纳入 Git。旧电脑的 `.venv` 不会被直接复用；需要重建前端依赖时会重新安装正确架构的 `node_modules`。
+- 已有同一账本服务时复用；8000 端口被其他服务占用或无响应时尝试 8001 等端口，不会结束其他进程。以每次打印的地址为准。
+- 数据仍保存在 `data` 和 `images`，启动过程不会清空账目或照片。运行日志位于 `.runtime/server-端口.log`，错误时保留终端提示方便检查。
+
+复制项目到另一台 Mac 时，可省略 `.runtime`、`.venv` 和 `node_modules`，在目标电脑双击启动即可。从 Git 获取的项目不包含个人账目；先在原电脑导出完整 JSON 备份，在目标电脑「工作室 → 恢复备份」导入。
+
+可选终端用法：
+
+```bash
+./启动针线小账.command --port 8080   # 指定起始端口
+./启动针线小账.command --rebuild     # 重新构建前端
+./启动针线小账.command --no-browser  # 启动后不打开系统浏览器
+```
+
+Git 会保留脚本的可执行权限。若其他复制方式丢失权限，可运行 `chmod +x 启动针线小账.command`。修改后端源码后，请先在原启动窗口按 `Ctrl+C`，再双击重新启动。
+
 ## 启动
 
 要求 Python 3.10+。从 Git 获取项目后首次构建前端需要 Node.js 20.19+ 或 22.12+。
@@ -46,7 +71,9 @@ frontend/src/         Vue 组件及手机样式
 frontend/dist/        可直接使用的前端构建
 images/               上传照片（压缩后的 JPG）
 data/bookkeeping.sqlite3   SQLite 数据库，启动时自动建立
-run.py                局域网启动入口
+启动针线小账.command  Mac 双击启动入口
+scripts/              环境准备、兼容辅助与启动管理
+run.py                手动局域网启动入口
 requirements*.txt     Python 依赖与当前环境锁定版本
 frontend/package-lock.json  前端依赖锁定版本
 tests/                后端集成测试

@@ -30,3 +30,6 @@ __pycache__/
 /sites/
 /stitch-ledger-deploy.tar.gz
 /screenshots/
+
+# One-click launcher: machine-specific runtimes and setup cache
+/.runtime/
