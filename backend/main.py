@@ -16,6 +16,7 @@ from .database import ConflictError, Database
 from .export import excel
 from .identity import instance_id
 from .images import MAX_UPLOAD, check_photos, embed_photos, restore_photos, store_image
+from .legacy_import import normalize_backup
 from .models import ClearInput, OrderInput, ProgressInput, StyleInput, TransactionInput, today
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -158,11 +159,9 @@ def create_app(data_dir: Path | None = None, images_dir: Path | None = None, fro
 
     @app.post('/api/restore')
     def restore(body: dict, x_ledger_revision: int | None = Header(default=None)):
-        if body.get('app') and body['app'] != 'stitch-ledger':
-            raise ValueError('请选择针线小账导出的备份文件。')
-        state = deepcopy(body.get('data', body))
         created = []
         try:
+            state = normalize_backup(body)
             ledger.validate(state)
             created = restore_photos(state, images_dir)
             return mutate(lambda s: ledger.validate(state), x_ledger_revision, undo=True)

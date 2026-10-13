@@ -37,6 +37,17 @@ def empty():
     return {'version': 2, 'orders': [], 'transactions': [], 'styles': []}
 
 
+def legacy_amounts(order):
+    legacy = order.get('legacyImport', {})
+    check(isinstance(legacy, dict) and (not legacy or legacy.get('format') == 'handmade-bags'), '旧版导入信息无效。')
+    overpayment = legacy.get('overpaymentCents', 0)
+    check(type(overpayment) is int and 0 <= overpayment <= 999999900, '旧版多收金额无效。')
+    undated_discount = cents(legacy.get('undatedDiscount', 0))
+    check(0 <= undated_discount <= 999999900, '旧版优惠金额无效。')
+    check(type(legacy.get('completedDateUnknown', False)) is bool, '旧版完成日期信息无效。')
+    return overpayment, undated_discount
+
+
 def recalc(state):
     for order in state['orders']:
         rows = [t for t in state['transactions'] if t.get('orderId') == order['id'] and t['type'] == 'income']
@@ -58,20 +69,21 @@ def validate(state):
     for order in state['orders']:
         fields = {k: order[k] for k in OrderInput.model_fields if k in order}
         OrderInput.model_validate(fields)
-        check(balance(order) >= 0, '已收金额与优惠之和不能超过报价。')
+        overpayment, undated_discount = legacy_amounts(order)
+        check(cents(balance(order)) >= -overpayment, '已收金额与优惠之和不能超过报价（旧版原有多收金额可以保留，不能增加）。')
         completed = order.get('completedDate', '')
         check(isinstance(completed, str), '订单完成日期无效。')
         if completed:
             date.fromisoformat(completed)
             check(completed >= order['date'], '完成日期不能早于下单日期。')
-        check(order['status'] != 'delivered' or completed, '已完成订单缺少完成日期。')
+        check(order['status'] != 'delivered' or completed or order.get('legacyImport', {}).get('completedDateUnknown'), '已完成订单缺少完成日期。')
         history = order.get('discountHistory', [])
         check(isinstance(history, list), '优惠历史无效。')
         for item in history:
             check(isinstance(item, dict) and isinstance(item.get('date'), str), '优惠历史无效。')
             date.fromisoformat(item['date'])
             check(item['date'] >= order['date'], '优惠登记日期不能早于下单日期。')
-        check(sum(cents(h['amount']) for h in history) == cents(order['discount']), '优惠历史与金额不一致。')
+        check(sum(cents(h['amount']) for h in history) + undated_discount == cents(order['discount']), '优惠历史与金额不一致。')
     for row in state['transactions']:
         TransactionInput.model_validate({k: row[k] for k in TransactionInput.model_fields if k in row})
         check(row['category'] in CATEGORIES, '收支类型不正确。')
@@ -109,11 +121,15 @@ def save_order(state, model: OrderInput, old_id=None):
     order['id'] = order['id'] or (old_id if old_id else next_number(state, order['date']))
     check(not any(o['id'] == order['id'] and o['id'] != old_id for o in state['orders']), '订单编号已存在。')
     order['discountHistory'] = deepcopy(old['discountHistory']) if old else []
+    if old and old.get('legacyImport'):
+        order['legacyImport'] = deepcopy(old['legacyImport'])
     delta = cents(order['discount']) - cents(old['discount'] if old else 0)
     if delta:
         check(receipt_date >= order['date'], '优惠日期不能早于下单日期。')
         order['discountHistory'].append({'date': receipt_date, 'amount': delta / 100})
-    order['completedDate'] = (old.get('completedDate') or receipt_date) if old and order['status'] == 'delivered' else receipt_date if order['status'] == 'delivered' else ''
+    order['completedDate'] = (old['completedDate'] if old and old['status'] == 'delivered' else receipt_date) if order['status'] == 'delivered' else ''
+    if order.get('legacyImport') and (order['status'] != 'delivered' or order['completedDate']):
+        order['legacyImport']['completedDateUnknown'] = False
     if old:
         for row in state['transactions']:
             if row.get('orderId') == old_id:
@@ -189,12 +205,16 @@ def summary(state, month=None):
     expense = total([t for t in rows if t['type'] == 'expense'])
     orders = [o for o in state['orders'] if not month or o['date'].startswith(month)]
     pending = 0
+    pending_estimated = False
     for order in state['orders']:
         if order['date'] <= end:
             received = total([t for t in state['transactions'] if t.get('orderId') == order['id'] and t['type'] == 'income' and t['date'] <= end])
             cut = sum(cents(h['amount']) for h in order['discountHistory'] if h['date'] <= end)
+            undated = legacy_amounts(order)[1]
+            cut += undated
+            pending_estimated = pending_estimated or bool(month and undated)
             pending += max(0, cents(order['price']) - cents(received) - cut)
-    return {'month': month or '累计', 'income': income, 'expense': expense, 'net': (cents(income) - cents(expense)) / 100, 'purchase': total([t for t in rows if t['type'] == 'expense' and t['category'].startswith('采购-')]), 'shipping': total([t for t in rows if t['category'] == '每周合并发货运费']), 'count': len(orders), 'completed': len([o for o in state['orders'] if o['status'] == 'delivered' and (not month or o['completedDate'].startswith(month))]), 'pending': pending / 100, 'discount': total(orders, 'discount')}
+    return {'month': month or '累计', 'income': income, 'expense': expense, 'net': (cents(income) - cents(expense)) / 100, 'purchase': total([t for t in rows if t['type'] == 'expense' and t['category'].startswith('采购-')]), 'shipping': total([t for t in rows if t['category'] == '每周合并发货运费']), 'count': len(orders), 'completed': len([o for o in state['orders'] if o['status'] == 'delivered' and (not month or o['completedDate'].startswith(month))]), 'pending': pending / 100, 'discount': total(orders, 'discount'), 'pendingEstimated': pending_estimated, 'completedUndated': len([o for o in state['orders'] if o['status'] == 'delivered' and not o['completedDate'] and o['date'] <= end])}
 
 
 def months(state):
