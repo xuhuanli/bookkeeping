@@ -37,6 +37,9 @@ def to_reference(state):
         'orderNo': row.get('referenceOrderNo', numbers.get(row.get('orderId'), row.get('orderId', ''))),
         'desc': row['title'], 'exp': row['amount'] if row['type'] == 'expense' else 0,
         'inc': row['amount'] if row['type'] == 'income' else 0, 'note': row.get('note', ''),
+        # Keep the historical number without attaching it to a future order
+        # that reuses the same number, including after a portable restore.
+        **({'orderRef': ''} if not row.get('orderId') and row.get('referenceOrderNo') else {}),
     } for row in state['transactions']]
     return {'orders': orders, 'cash': cash, 'seq': sequence,
             'styles': [{'name': s['name'], 'price': s.get('price')} for s in state['styles']]}
@@ -152,6 +155,7 @@ def from_reference(source, previous, *, synchronize=True, receipt_date=None):
     old_cash = {r['id']: r for r in previous['transactions']}
     old_numbers = {o['id']: o.get('no', o['id']) for o in previous['orders']}
     new_numbers = {o['id']: o['no'] for o in state['orders']}
+    references = {o['referenceId']: o['id'] for o in state['orders']}
     for row in source['cash']:
         ledger.check(isinstance(row, dict), '收支记录无效。')
         income, expense = ledger.cents(row.get('inc', 0)), ledger.cents(row.get('exp', 0))
@@ -164,12 +168,17 @@ def from_reference(source, previous, *, synchronize=True, receipt_date=None):
             'title': row['desc'], 'amount': (income or expense) / 100,
             'orderId': numbers.get(number, ''), 'referenceOrderNo': number, 'note': row.get('note', ''),
         }
-        # Renaming an order must not disconnect its existing receipts. Explicitly
-        # changing the cash row's selected order still reassigns it normally.
+        # An unchanged number keeps the existing association, even when its
+        # order has been deleted. A reused display number is not the same order.
         old_row = old_cash.get(row['id'], {})
         old_number = old_row.get('referenceOrderNo', old_numbers.get(old_row.get('orderId'), ''))
-        if number and number == old_number and old_row.get('orderId') in new_numbers:
-            saved['orderId'] = old_row['orderId']
+        if 'orderRef' in row:
+            reference = row['orderRef']
+            ledger.check(isinstance(reference, str) and (not reference or reference in references), '关联订单不存在。')
+            saved['orderId'] = references.get(reference, '')
+        elif synchronize and old_row and number == old_number:
+            saved['orderId'] = old_row['orderId'] if old_row.get('orderId') in new_numbers else ''
+        if saved['orderId']:
             saved['referenceOrderNo'] = new_numbers[saved['orderId']]
         if income:
             saved['kind'] = 'deposit' if saved['category'] == '收入-定金' else 'final'

@@ -74,8 +74,61 @@ def test_delete_and_rename_order_preserve_cash_and_original_number(client):
     assert saved['orders'][0]['id'] == 'source-1'
     saved['orders'] = []
     assert save(client, saved).is_success
-    assert client.get('/api/book').json()['data']['cash'] == saved['cash']
+    assert client.get('/api/book').json()['data']['cash'] == [{**saved['cash'][0], 'orderRef': ''}]
     assert client.get('/api/ledger').json()['data']['transactions'][0]['orderId'] == ''
+
+
+@pytest.mark.parametrize('delete_first', [False, True])
+def test_reusing_deleted_order_number_keeps_receipts_separate_and_portable(client, tmp_path, delete_first):
+    data = save(client, book()).json()['data']
+    original = deepcopy(data['cash'][0])
+    replacement = {**data['orders'][0], 'id': 'replacement', 'customer': '新顾客', 'deposit': 20}
+    data['orders'] = []
+    if delete_first:
+        data = save(client, data).json()['data']
+    data['orders'] = [replacement]
+    response = save(client, data)
+    assert response.is_success, response.text
+    data = response.json()['data']
+    assert len(data['cash']) == 2
+    assert data['cash'][0] == {**original, 'orderRef': ''}
+    assert data['cash'][1]['inc'] == 20
+    assert data['cash'][1]['desc'] == '新顾客 · 测试包 ×2'
+    assert client.get('/api/reports').json()['total']['income'] == 45
+    # Correcting historical cash must not change the new order's deposit.
+    data['cash'][0]['inc'] = 26
+    data = save(client, data).json()['data']
+    assert data['orders'][0]['deposit'] == 20
+    assert save(client, data).json()['data'] == data
+    portable = client.get('/api/book/backup').json()
+    with TestClient(create_app(tmp_path / 'restored-data', tmp_path / 'restored-images', tmp_path / 'missing')) as other:
+        restored = save(other, portable, restore=True)
+        assert restored.is_success, restored.text
+        assert restored.json()['data'] == data
+        data['orders'][0]['deposit'] = 21
+        updated = save(other, data).json()['data']
+        assert updated['cash'][0]['inc'] == 26
+        assert updated['cash'][1]['inc'] == 21
+        assert other.get('/api/reports').json()['total']['income'] == 47
+
+
+def test_historical_cash_can_be_explicitly_linked_to_reused_number(client):
+    data = save(client, book()).json()['data']
+    replacement = {**data['orders'][0], 'id': 'replacement', 'deposit': 0}
+    data['orders'] = [replacement]
+    data = save(client, data).json()['data']
+    assert data['cash'][0]['orderRef'] == ''
+    data['cash'][0]['orderRef'] = replacement['id']
+    data = save(client, data).json()['data']
+    assert data['orders'][0]['deposit'] == 25
+    assert len(data['cash']) == 1 and 'orderRef' not in data['cash'][0]
+
+
+def test_invalid_explicit_cash_order_reference_is_rejected(client):
+    data = save(client, book()).json()['data']
+    data['cash'][0]['orderRef'] = 'missing-order'
+    assert save(client, data).status_code == 400
+    assert client.get('/api/book').json()['data']['orders'][0]['deposit'] == 25
 
 
 def test_reference_monthly_summary_uses_order_month_and_current_order_amounts(client):

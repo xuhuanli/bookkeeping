@@ -568,7 +568,7 @@ function renderSummary(){
     return;
   }
   box.innerHTML = c.months.map(m=>{
-    const exp = m.cost + m.freight;
+    const exp = m.exp;
     const net = m.inc - exp;
     const tot = Math.max(exp + m.inc, 0.01);
     return `<div class="mrow">
@@ -672,7 +672,7 @@ function orderForm(o){
   const calc = ()=>{
     const needsReceiptDate = [['deposit',D,'收入-定金'],['final',F,'收入-尾款']].some(([kind,input,type])=>
       num(input.value)>0 && num(input.value)!==num(o[kind]) &&
-      !DB.cash.some(row=>row.orderNo===o.no && row.type===type && num(row.inc)>0));
+      !DB.cash.some(row=>row.orderRef!=='' && row.orderNo===o.no && row.type===type && num(row.inc)>0));
     $('receiptDateField').hidden = !needsReceiptDate;
     const r = R(), cut = num(C.value);
     $('f_due').textContent = '¥'+money(num(P.value)-num(D.value));
@@ -802,8 +802,7 @@ function orderForm(o){
         if(byName[it.name] && picked.map(x=>x.name).indexOf(it.name) === -1) picked.push({ name:it.name, qty:it.qty });
       });
     }
-    /* 已有订单里写了数量、但报价是「单价×数量」的，回填时同步一次报价 */
-    if(picked.length) syncFromPicked();
+    /* 回填只恢复选择状态；旧订单的手填款式和成交报价保持原样。 */
     refreshStyleUI();
   }
   $('f_style').addEventListener('input', ()=>{
@@ -874,7 +873,9 @@ function orderForm(o){
 function cashForm(x){
   const isNew = !x;
   x = x || {date:today(),type:'采购-布料',orderNo:'',desc:'',exp:'',inc:'',note:''};
-  const orderOpts = DB.orders.map(o=>`<option value="${esc(o.no)}"${o.no===x.orderNo?' selected':''}>${esc(o.no)} · ${esc(o.customer)}</option>`).join('');
+  const detached = x.orderRef === '' && x.orderNo;
+  const orderOpts = (detached ? `<option value="history" selected>${esc(x.orderNo)}（原订单已删除）</option>` : '') +
+    DB.orders.map(o=>`<option value="order:${esc(o.id)}"${!detached && o.no===x.orderNo?' selected':''}>${esc(o.no)} · ${esc(o.customer)}</option>`).join('');
   openSheet(`
     <h2>${isNew?'记一笔收支':'编辑收支'}</h2>
     <div class="field"><label>日期 <span class="req">*</span></label>
@@ -926,10 +927,13 @@ function cashForm(x){
     if(!desc){ toast('请填物品/事项说明'); return; }
     const e = isInc?0:num(expI.value), i = isInc?num(incI.value):0;
     if(e===0 && i===0){ toast('请填金额'); return; }
+    const selection = $('c_orderNo').value;
+    const selectedOrder = DB.orders.find(o=>'order:'+o.id===selection);
     const rec = {
       id: curId || uid(),
       date, type,
-      orderNo: $('c_orderNo').value,
+      orderNo: selectedOrder ? selectedOrder.no : selection==='history' ? x.orderNo : '',
+      orderRef: selectedOrder ? selectedOrder.id : '',
       desc,
       exp: e, inc: i,
       note: $('c_note').value.trim()
@@ -1139,7 +1143,19 @@ function colLetter(i){
   return s;
 }
 
-function exportExcel(){
+async function exportExcel(){
+  if(persisting){ toast('正在保存，请稍等'); return; }
+  const unlock = lockControls();
+  try {
+    await load();
+    renderAll();
+    buildExcel();
+  } catch(error) {
+    toast('导出失败：'+error.message, 4500);
+  } finally { unlock(); }
+}
+
+function buildExcel(){
   const c = compute();
   const S = {
     title:1, hdrP:2, hdrG:3, hdrB:4,
@@ -1231,7 +1247,7 @@ function exportExcel(){
    '2. 「待收尾款」= 报价 − 抹零/优惠 − 定金 − 尾款，已由网页版自动算好。',
    '3. 客户尾款抹零头（如应收 41.7、实收 41）时，把差额 0.7 填进「抹零/优惠」列，订单即可结清，利润统计也准确。',
    '4. 订单状态只有三档：已收定金-待制作 / 已收尾款-待发货 / 已完成。',
-   '5. 同一笔定金/尾款需同时在【收支明细】登记一行（填实际到账金额），两张表才能对上。',
+   '5. 订单定金/尾款保存后会自动同步【收支明细】，请勿重复登记；历史缺项需按实际收款记录核对。',
    '6. 「快递单号」发货后补填；客人拿着单号来问，直接在网页版搜索框输入单号就能定位到这一单。',
    '7. 如当月出现退款/退货，请在备注注明，并从对应收入中体现，避免利润虚高。'
   ].forEach(t=>oRows.push({n:n++, h:19, cells:[{v:t,s:S.cream}]}));
@@ -1315,7 +1331,7 @@ function exportExcel(){
   const sHdr=['月份','总采购成本（元）','总发货运费（元）','总支出合计（元）','总收入合计（元）','抹零/优惠合计（元）','本月净利润（元）','订单情况（新增 / 已完成 / 月末待收尾款）','备注'];
   sRows.push({n:k++, h:30, cells:sHdr.map(h=>({v:h,s:S.hdrB}))});
   c.months.slice().sort((a,b)=>a.mon<b.mon?-1:1).forEach(mm=>{
-    const exp=mm.cost+mm.freight, net=mm.inc-exp;
+    const exp=mm.exp, net=mm.inc-exp;
     sRows.push({n:k++, cells:[
       {v:mm.mon,s:S.txB},{v:mm.cost,t:'n',s:S.exp},{v:mm.freight,t:'n',s:S.exp},
       {v:exp,t:'n',s:S.expB},{v:mm.inc,t:'n',s:S.incB},
@@ -1336,7 +1352,7 @@ function exportExcel(){
    '2. 最上面的「📈 全程总账」是从你登记的第一笔账算到导出时的累计数，网页版里每记一笔都会自动更新。',
    '3. 总采购成本 = 布料 + 耗材辅料 + 工具；总发货运费 = 每周合并发货运费；总收入 = 定金 + 尾款（实际到账）。',
    '4. 抹零/优惠合计 = 所有订单让给客户的零头之和，是实际收入与报价之间的差额，仅作参考，已从应收中扣除。',
-   '5. 净利润 = 总收入 −（总采购成本 + 总发货运费）；月均 = 累计值 ÷ 有数据的自然月数。',
+   '5. 净利润 = 总收入 − 全部支出（含采购、运费及其他支出）；月均 = 累计值 ÷ 有数据的自然月数。',
    '6. 平均每单净赚 = 累计净利润 ÷ 订单总数，用来判断这个副业单量上是否划算。',
    '7. 如当月出现退款/退货，请在备注注明，避免利润虚高。'
   ].forEach(t=>sRows.push({n:k++, h:19, cells:[{v:t,s:S.cream}]}));
