@@ -9,14 +9,10 @@ __pycache__/
 /frontend/node_modules/
 /frontend/dist/
 
-# Local ledger, backups and uploaded photos
-/data/*
-!/data/.gitkeep
-/images/*
-!/images/.gitkeep
-*.sqlite3
+# Ledger, backups and uploaded photos are versioned; SQLite runtime files are not.
 *.sqlite3-wal
 *.sqlite3-shm
+*.sqlite3-journal
 
 # Local secrets and editor metadata
 .env

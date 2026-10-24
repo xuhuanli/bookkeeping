@@ -1,0 +1,38 @@
+{
+  "source": "手作包包记账_备份_2026-10-12.json",
+  "sha256": "30cc314205f02439b161b4c7a37f3672962bd0b7d2db13f89d0416aa14f6a729",
+  "revision": 2,
+  "counts": {
+    "orders": 34,
+    "transactions": 118,
+    "styles": 21,
+    "photoReferences": 11,
+    "imageFiles": 10
+  },
+  "totals": {
+    "month": "累计",
+    "income": 1376.5,
+    "expense": 1244.91,
+    "net": 131.59,
+    "purchase": 1213.21,
+    "shipping": 31.7,
+    "count": 34,
+    "completed": 8,
+    "pending": 773.9,
+    "discount": 35.9,
+    "pendingEstimated": false,
+    "completedUndated": 8
+  },
+  "statuses": {
+    "delivered": 8,
+    "ready": 7,
+    "booked": 19
+  },
+  "preImportBackup": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/导入前账本-20261013-203217.json",
+  "originalCopy": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/原始导入数据-手作包包记账_备份_2026-10-12.json",
+  "portableBackup": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/导入后完整账本-20261013-203756.json",
+  "unknownCompletionDates": 8,
+  "unknownDiscountDates": 6,
+  "overpaymentCents": 30,
+  "verifiedFields": "All original order money, cash records, contact text, notes, styles and photo references matched"
+}

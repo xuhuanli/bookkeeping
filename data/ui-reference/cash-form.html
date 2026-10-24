@@ -1,0 +1,25 @@
+<div class="sheet-in" id="sheetIn">
+    <h2>记一笔收支</h2>
+    <div class="field"><label>日期 <span class="req">*</span></label>
+      <input type="date" id="c_date" value="2026-10-24"></div>
+    <div class="field"><label>收支类型 <span class="req">*</span></label>
+      <select id="c_type"><option selected="">采购-布料</option><option>采购-耗材辅料</option><option>采购-工具</option><option>每周合并发货运费</option><option>收入-定金</option><option>收入-尾款</option></select></div>
+    <div class="field"><label>对应订单编号（收入类建议选）</label>
+      <select id="c_orderNo"><option value="">— 不关联订单 —</option></select>
+      <div class="hint">采购、运费类可以留空</div></div>
+    <div class="field"><label>物品/事项说明 <span class="req">*</span></label>
+      <input type="text" id="c_desc" value="" placeholder="如 厚帆布2米 / 【第38周合并多单发货运费，共3个包裹】">
+      <div class="hint">运费请写明第几周、一共多少个包裹</div></div>
+    <div class="field"><label>支出金额（元）</label>
+      <input type="number" id="c_exp" inputmode="decimal" step="0.01" min="0" value="" placeholder="支出填这里，正数" style="opacity: 1;">
+      <div class="hint">采购、运费填这里；收入类留空</div></div>
+    <div class="field"><label>收入金额（元）</label>
+      <input type="number" id="c_inc" inputmode="decimal" step="0.01" min="0" value="" placeholder="收入填这里，正数" disabled="" style="opacity: 0.45;">
+      <div class="hint">定金、尾款填这里；<b>填实际到账的金额</b>（客户抹零后实付多少就填多少），支出类留空</div></div>
+    <div class="field"><label>备注</label>
+      <textarea id="c_note" placeholder="其他补充信息"></textarea></div>
+    <div class="sheet-btns">
+      
+      <button class="btn btn-sec" id="cancelBtn">取消</button>
+      <button class="btn btn-pri" id="saveBtn">保存</button>
+    </div></div>

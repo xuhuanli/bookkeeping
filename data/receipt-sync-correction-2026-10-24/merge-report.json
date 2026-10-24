@@ -1,0 +1,28 @@
+{
+  "orderId": "DD20261006-01",
+  "customer": "珂珂",
+  "revision": 10,
+  "beforeRows": [
+    {
+      "id": "92303392-feb8-4fe0-aa40-b9a172538f04",
+      "date": "2026-10-24",
+      "amount": 19.9
+    },
+    {
+      "id": "38937362-5cf9-4a43-abb6-57df43794aec",
+      "date": "2026-10-24",
+      "amount": 1.0
+    },
+    {
+      "id": "08adca19-a4fd-424d-ac7a-b96056221241",
+      "date": "2026-10-24",
+      "amount": 1.0
+    }
+  ],
+  "keptReceiptId": "92303392-feb8-4fe0-aa40-b9a172538f04",
+  "mergedAmount": 21.9,
+  "cashCount": 129,
+  "summaryUnchanged": true,
+  "backupJson": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/修正重复尾款前完整账本-20261024-190346.json",
+  "backupSqlite": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/修正重复尾款前数据库-20261024-190346.sqlite3"
+}

@@ -1,0 +1,57 @@
+<div class="sheet-in" id="sheetIn">
+    <h2>新建订单</h2>
+    <div class="field"><label>下单日期 <span class="req">*</span></label>
+      <input type="date" id="f_date" value="2026-10-24"></div>
+    <div class="field"><label>订单编号</label>
+      <input type="text" id="f_no" value="" placeholder="留空自动生成，如 DD20261008-01">
+      <div class="hint">下单日期填好后留空，保存时会自动编号</div></div>
+    <div class="field"><label>客户名称/昵称 <span class="req">*</span></label>
+      <input type="text" id="f_customer" value="" placeholder="例如 小林、阿柚">
+      <div class="hint">建议填客人下定金时用的那个名字，之后搜这个名字就能找到订单</div></div>
+    <div class="field"><label>收货信息（姓名 / 电话 / 地址）</label>
+      <textarea id="f_address" placeholder="例如：小林 13800138000 广东省深圳市南山区XX路XX号XX栋X单元"></textarea>
+      <div class="hint">写在一行里就行，不用分开填；发货时直接复制</div></div>
+    <div class="field"><label>快递单号</label>
+      <input type="text" id="f_tracking" value="" placeholder="例如 77312345678901、SF1234567890">
+      <div class="hint">发货后把单号填这里，客人来问时一搜就能找到</div></div>
+    <div class="field"><label>包包款式/规格 <span class="req">*</span></label>
+      <input type="text" id="f_style" value="" placeholder="例如 帆布托特包·中号·米白">
+      <div class="hint">可以直接打字，也可以点下面的常用款式快速填入（可多选，报价自动相加）</div>
+      <div class="quickrow" id="styleQuick"><span style="font-size:11px;color:var(--muted)">还没有常用款式，点右上角「⋯ → 管理常用款式」添加</span></div>
+      <div class="hint" id="styleSum" style="margin-top:4px"></div></div>
+    <div class="field"><label>订单报价（元） <span class="req">*</span></label>
+      <input type="number" id="f_price" inputmode="decimal" step="0.01" min="0" value="" placeholder="0.00"></div>
+    <div class="field"><label>已收定金（元）</label>
+      <input type="number" id="f_deposit" inputmode="decimal" step="0.01" min="0" value="" placeholder="没收到就填 0 或留空">
+      <div class="hint">只填实际已经收到的金额；也可以点下面的常见档位</div>
+      <div class="quickrow" id="depQuick"><button type="button" data-dep="25">定金 25</button><button type="button" data-dep="10">定金 10</button><button type="button" data-dep="0">无定金</button></div></div>
+    <div class="field"><label>已收尾款（元）</label>
+      <input type="number" id="f_final" inputmode="decimal" step="0.01" min="0" value="" placeholder="没收到就填 0 或留空">
+      <div class="hint">只填实际到账金额（客人抹零后实付多少就填多少）</div></div>
+    <div class="field"><label>抹零 / 优惠（元）</label>
+      <input type="number" id="f_cut" inputmode="decimal" step="0.01" min="0" value="" placeholder="抹掉的零头填这里，没有就留空">
+      <div class="hint">客人付尾款时你客气抹掉的那部分，填这里订单才能结清、利润才准确</div>
+      <div class="quickrow" id="cutQuick"><span style="font-size:11px;color:var(--muted)">当前没有零头需要抹</span></div></div>
+    <div class="calcbox multi">
+      <div class="line"><span class="k">应收尾款（报价 − 定金）</span><span class="v" id="f_due">¥0.00</span></div>
+      <div class="line"><span class="k">抹零 / 优惠</span><span class="v" id="f_cutshow">−¥0.00</span></div>
+      <div class="line big"><span class="k">待收尾款</span><span class="v ok" id="f_owe">¥0.00</span></div>
+    </div>
+    <div class="field"><label>订单状态</label>
+      <select id="f_status"><option selected="">已收定金-待制作</option><option>已收尾款-待发货</option><option>已完成</option></select></div>
+    <div class="field"><label>成品照片</label>
+      <div class="hint" style="margin:0 0 8px">做好拍几张传上来，列表里能看到缩略图；生成「订单截图」时也会自动带上</div>
+      <div class="hint" style="margin:0 0 8px;color:#C08A2E">📐 照片按 1:1 正方形展示，建议上传时裁成正方形，主体居中，避免被裁掉</div>
+      <div class="photoGrid" id="phGrid"><div class="phempty">还没有照片</div></div>
+      <input type="file" id="phInput" accept="image/*" multiple="" style="display:none">
+      <button type="button" class="btn btn-sec btn-sm" id="phAdd" style="width:100%">📷 添加照片</button>
+      <div class="hint" id="phHint" style="margin-top:6px">最多 6 张，上传时会自动压缩，不占太多空间</div></div>
+    <div class="field"><label>备注</label>
+      <textarea id="f_note" placeholder="加急、定制要求、退款情况等"></textarea></div>
+    <div class="sheet-btns">
+      
+      
+      <button class="btn btn-sec" id="cancelBtn">取消</button>
+      <button class="btn btn-pri" id="saveBtn">保存</button>
+    </div>
+    </div>

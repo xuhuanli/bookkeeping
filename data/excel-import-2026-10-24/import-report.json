@@ -1,0 +1,164 @@
+{
+  "source": "/Users/xuhuanli/Downloads/手作包包记账表_2026-10-24.xlsx",
+  "sourceSha256": "a76ab71986c9872e08be6408091b717cc56c83e72811d749c1f9abdd6bbd45d6",
+  "previousRevision": 3,
+  "counts": {
+    "orders": 37,
+    "transactions": 128,
+    "styles": 21
+  },
+  "orderDateRange": [
+    "2026-09-21",
+    "2026-10-16"
+  ],
+  "cashDateRange": [
+    "2026-09-04",
+    "2026-10-18"
+  ],
+  "summary": {
+    "month": "累计",
+    "income": 1411.5,
+    "expense": 1440.17,
+    "net": -28.67,
+    "purchase": 1378.47,
+    "shipping": 61.7,
+    "count": 37,
+    "completed": 28,
+    "pending": 407.9,
+    "discount": 22.4,
+    "pendingEstimated": false,
+    "completedUndated": 0
+  },
+  "renumberedOrders": [
+    {
+      "sheetRow": 37,
+      "date": "2026-10-13",
+      "customer": "今天也e",
+      "oldNumber": "1",
+      "newNumber": "DD20261013-01"
+    },
+    {
+      "sheetRow": 38,
+      "date": "2026-10-13",
+      "customer": "薄脆土豆饼",
+      "oldNumber": "1",
+      "newNumber": "DD20261013-02"
+    },
+    {
+      "sheetRow": 39,
+      "date": "2026-10-16",
+      "customer": "L",
+      "oldNumber": "1",
+      "newNumber": "DD20261016-01"
+    }
+  ],
+  "reassignedCash": [
+    {
+      "sheetRow": 121,
+      "oldNumber": "1",
+      "newNumber": "DD20261013-01",
+      "amount": 10.0
+    },
+    {
+      "sheetRow": 123,
+      "oldNumber": "1",
+      "newNumber": "DD20261013-02",
+      "amount": 25.0
+    }
+  ],
+  "unmatchedOrderNumbers": [],
+  "historicalReceiptGaps": [
+    {
+      "orderNo": "DD20260929-01",
+      "customer": "GRACIE、",
+      "depositDifference": 0.0,
+      "finalDifference": 53.0
+    },
+    {
+      "orderNo": "DD20260929-02",
+      "customer": "不困",
+      "depositDifference": 0.0,
+      "finalDifference": 21.9
+    },
+    {
+      "orderNo": "DD20260929-03",
+      "customer": "豆",
+      "depositDifference": 0.0,
+      "finalDifference": 40.0
+    },
+    {
+      "orderNo": "DD20261001-01",
+      "customer": "小兔降临",
+      "depositDifference": 0.0,
+      "finalDifference": 21.9
+    },
+    {
+      "orderNo": "DD20261001-03",
+      "customer": "X2",
+      "depositDifference": 0.0,
+      "finalDifference": 54.8
+    },
+    {
+      "orderNo": "DD20261001-04",
+      "customer": "Magic",
+      "depositDifference": 0.0,
+      "finalDifference": 22.8
+    },
+    {
+      "orderNo": "DD20261004-01",
+      "customer": "I",
+      "depositDifference": 0.0,
+      "finalDifference": 22.0
+    },
+    {
+      "orderNo": "DD20261004-02",
+      "customer": "煎荷包蛋",
+      "depositDifference": 0.0,
+      "finalDifference": 40.8
+    },
+    {
+      "orderNo": "DD20261004-04",
+      "customer": "7.",
+      "depositDifference": 0.0,
+      "finalDifference": 21.9
+    },
+    {
+      "orderNo": "DD20261005-01",
+      "customer": "小也",
+      "depositDifference": 0.0,
+      "finalDifference": 34.3
+    },
+    {
+      "orderNo": "DD20261005-02",
+      "customer": "dionysus",
+      "depositDifference": 0.0,
+      "finalDifference": 21.9
+    },
+    {
+      "orderNo": "DD20261006-01",
+      "customer": "珂珂",
+      "depositDifference": 0.0,
+      "finalDifference": 21.9
+    },
+    {
+      "orderNo": "DD20261008-01",
+      "customer": "nine",
+      "depositDifference": 0.0,
+      "finalDifference": 72.0
+    },
+    {
+      "orderNo": "DD20261016-01",
+      "customer": "L",
+      "depositDifference": 25.0,
+      "finalDifference": 0.0
+    }
+  ],
+  "historicalReceiptDifference": 474.2,
+  "generatedHistoricalReceipts": 0,
+  "previousPhotosPreserved": true,
+  "status": "imported",
+  "importedAt": "2026-10-24T18:43:22.212939+08:00",
+  "revision": 4,
+  "backupJson": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/Excel更新前完整账本-20261024-184322.json",
+  "backupSqlite": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/Excel更新前数据库-20261024-184322.sqlite3"
+}

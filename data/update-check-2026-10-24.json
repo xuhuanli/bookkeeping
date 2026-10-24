@@ -1,0 +1,15 @@
+{
+  "checkedOn": "2026-10-24",
+  "source": "手作包包记账_备份_2026-10-12.json",
+  "sourceSha256": "30cc314205f02439b161b4c7a37f3672962bd0b7d2db13f89d0416aa14f6a729",
+  "result": "already_current",
+  "revision": 2,
+  "counts": {
+    "orders": 34,
+    "transactions": 118,
+    "styles": 21
+  },
+  "verifiedPhotoReferences": 11,
+  "uniqueImages": 10,
+  "backup": "/Users/xuhuanli/PycharmProjects/bookkeeping/data/backups/账本核对备份-20261024-171628.json"
+}
