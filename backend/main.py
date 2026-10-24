@@ -82,10 +82,16 @@ def create_app(data_dir: Path | None = None, images_dir: Path | None = None, fro
                 'imageSizes': {url: image_path(url, images_dir).stat().st_size for url in photos}}
 
     @app.put('/api/book')
-    def save_book(body: dict, x_ledger_revision: int = Header()):
+    def save_book(body: dict, x_ledger_revision: int = Header(),
+                  x_receipt_date: str | None = Header(default=None),
+                  x_book_restore: bool = Header(default=False)):
         created = []
         try:
-            state = from_reference(body, database.read()[0])
+            if x_receipt_date:
+                from datetime import date
+                ledger.check(date.fromisoformat(x_receipt_date).isoformat() == x_receipt_date, '收款日期不正确。')
+            state = from_reference(body, database.read()[0], synchronize=not x_book_restore,
+                                   receipt_date=x_receipt_date)
             created = restore_photos(state, images_dir)
             saved = mutate(lambda _: ledger.validate(state), x_ledger_revision, undo=True)
             return book_result(saved['data'], saved['revision'])

@@ -27,7 +27,10 @@ onBeforeUnmount(() => cleanup?.())
   </div>
   <div class="searchhint" id="orderSearchHint"></div>
   <div class="card">
-    <div class="card-hd hd-pink"><span>订单列表</span><span id="orderCount" style="font-weight:400;font-size:12px;color:#7A8B82">共 0 条</span></div>
+    <div class="card-hd hd-pink order-list-heading">
+      <div class="order-list-title"><span>订单列表</span><span id="orderCount" style="font-weight:400;font-size:12px;color:#7A8B82">共 0 条</span></div>
+      <div class="order-filters" id="orderFilters" role="group" aria-label="订单筛选"></div>
+    </div>
     <div id="orderList"><div class="empty"><span class="big">📦</span>还没有订单<br>点下方「+ 记一笔订单」开始记录<br><span style="font-size:11.5px">数据会自动保存在本机</span></div></div>
   </div>
   <div class="notes">
@@ -37,12 +40,7 @@ onBeforeUnmount(() => cleanup?.())
     <p>3. 待收尾款 = 报价 − 定金 − 尾款 − 抹零，自动算，不用管；数字大于 0 会自动亮黄提示。</p>
     <p>4. 订单状态只有三个，按下拉选：<b>已收定金-待制作</b> → <b>已收尾款-待发货</b> → <b>已完成</b>。</p>
     <p>5. 客人尾款抹零头时，把抹掉的金额填进「抹零/优惠」，订单就能正常结清，利润统计也准确。</p>
-    <p>6. 同一笔定金/尾款记得在「收支明细」也记一行，两页才对得上。</p>
-    <p class="nt" style="margin-top:10px">📷 成品照片 &amp; 订单截图</p>
-    <p>7. 做好一个包就在编辑订单里「成品照片」传几张，会存进这单里，列表上能看到缩略图，点一下放大。</p>
-    <p>8. 要收尾款时，点订单右边的 <b>📸</b>（或在编辑页点「生成订单截图」），会生成一张<b>订单详情图</b>：客户、编号、款式、金额、待补尾款、成品照片都在上面。</p>
-    <p>9. 点「保存到相册」存进手机相册，再把图发给客人确认。若没自动存进相册，可长按图片选「保存图片」。</p>
-    <p>10. 图片存不下来、或想直接发文字，可以点「复制文字版」，粘到微信发给她。</p>
+    <p>6. 保存定金、尾款后，会自动登记到「收支明细」，并按收款日期计入「月度汇总」，不用重复记账。</p>
   </div>
 </div>
 <div class="panel" id="panel-cash">
@@ -57,12 +55,12 @@ onBeforeUnmount(() => cleanup?.())
   </div>
   <div class="notes">
     <p class="nt">📝 收支明细怎么用</p>
-    <p>1. 每一笔真实现金流记一行：买一次布一行、收到定金一行、尾款一行。</p>
+    <p>1. 采购、运费等支出在这里登记；订单里的定金、尾款保存后会自动生成收入流水，不用再记一次。</p>
     <p>2. 支出填「支出金额」，收入填「收入金额」，<b>全部填正数</b>，同一行只填一边。</p>
     <p>3. <b>收入永远填实际到账的钱。</b>客人尾款抹掉零头、实付 41 就填 41；差的那 0.7 回到订单里填「抹零/优惠」，账就平了。</p>
     <p>4. 运费规则：不用每个包裹单独记！每周发货结束，把这周快递总运费记 1 行，说明写「第几周，共 XX 个包裹」。</p>
     <p>5. 买布、辅料、工具都算支出；贵的工具在备注里写明，一次性计入当月成本。</p>
-    <p>6. 退款/退货在备注注明，并从对应收入中冲减，避免利润虚高。</p>
+    <p>6. 修改或删除关联订单的收入流水，会同步更新订单已收金额与月度汇总。退款/退货请在备注注明，并从对应收入中冲减。</p>
   </div>
 </div>
 <div class="panel" id="panel-summary">

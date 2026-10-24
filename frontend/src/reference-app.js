@@ -1,7 +1,7 @@
 export function startReferenceApp() {
 
 /* UI and interactions matched to the user-supplied reference app.
-   Records and photos are saved by the local FastAPI service. */
+   Records are saved by the local FastAPI service. */
 const ORDER_STATUS = ['已收定金-待制作','已收尾款-待发货','已完成'];
 const CASH_TYPES = ['采购-布料','采购-耗材辅料','采购-工具','每周合并发货运费','收入-定金','收入-尾款'];
 const STATUS_CLS = {
@@ -18,7 +18,6 @@ function today(){
 let revision = 0;
 let confirmed = JSON.stringify(DB);
 let persisting = false;
-let imageSizes = {};
 async function request(path, options = {}) {
   let response;
   try { response = await fetch(path, options); }
@@ -30,7 +29,6 @@ async function request(path, options = {}) {
 function accept(result) {
   DB = result.data;
   revision = result.revision;
-  if (result.imageSizes) imageSizes = result.imageSizes;
   confirmed = JSON.stringify(DB);
 }
 function lockControls() {
@@ -42,13 +40,15 @@ function lockControls() {
 async function load() {
   accept(await request('/api/book'));
 }
-async function save(payload = DB) {
+async function save(payload = DB, options = {}) {
   if (persisting) { toast('正在保存，请稍等'); return false; }
   persisting = true;
   const unlock = lockControls();
   try {
     accept(await request('/api/book', {
-      method: 'PUT', headers: {'Content-Type': 'application/json', 'X-Ledger-Revision': String(revision)},
+      method: 'PUT', headers: {'Content-Type': 'application/json', 'X-Ledger-Revision': String(revision),
+        ...(options.receiptDate ? {'X-Receipt-Date': options.receiptDate} : {}),
+        ...(options.restore ? {'X-Book-Restore': 'true'} : {})},
       body: JSON.stringify(payload),
     }));
     return true;
@@ -95,7 +95,7 @@ function styleList(){
 const styleNames = () => styleList().map(s=>s.name);
 /* 查单价；找不到返回 0
    支持松匹配：订单里常写成「帆布托特包·中号·米白」，款式库只登记了「帆布托特包」，
-   此时按「前缀 / 首个分隔符前的主名」回退匹配，避免截图价格显示成「—」。 */
+   此时按「前缀 / 首个分隔符前的主名」回退匹配，避免款式价格匹配失败。 */
 function stylePrice(name){
   const k = String(name==null?'':name).trim();
   if(!k) return 0;
@@ -290,6 +290,35 @@ function $(id){ return document.getElementById(id); }
 
 /* ---------- 搜索：订单筛选 ---------- */
 let orderQuery = '';
+let selectedOrderFilter = 'all';
+const orderFilters = [
+  {id:'all', label:'全部', match:()=>true},
+  {id:'making', label:'待制作', match:o=>o.status==='已收定金-待制作'},
+  {id:'shipping', label:'待发货', match:o=>o.status==='已收尾款-待发货'},
+  {id:'completed', label:'已完成', match:o=>o.status==='已完成'},
+  {id:'unpaid', label:'待收尾款', match:o=>owe(o)>EPS},
+];
+
+function renderOrderFilters(searched){
+  $('orderFilters').innerHTML = orderFilters.map(filter=>{
+    const count = searched.filter(filter.match).length;
+    const selected = selectedOrderFilter===filter.id;
+    return `<button type="button" class="order-filter${selected?' is-active':''}"
+      data-order-filter="${filter.id}" aria-pressed="${selected}" aria-label="${filter.label}，${count} 条订单">
+      <span>${filter.label}</span><span class="order-filter-count" aria-hidden="true">${count}</span>
+    </button>`;
+  }).join('');
+}
+
+function selectOrderFilter(event){
+  const button = event.target.closest('[data-order-filter]');
+  if(!button || !$('orderFilters').contains(button)) return;
+  const id = button.dataset.orderFilter;
+  if(id===selectedOrderFilter || !orderFilters.some(filter=>filter.id===id)) return;
+  selectedOrderFilter = id;
+  renderOrders();
+  $('orderFilters').querySelector(`[data-order-filter="${id}"]`).focus({preventScroll:true});
+}
 /* 关键词归一化：去空格、全角转半角、统一小写，让「小林 」「　小林」都能搜到 */
 function norm(s){
   return String(s==null?'':s)
@@ -337,7 +366,12 @@ function renderOrders(){
     <div class="kpi"><div class="lab">待收尾款合计</div><div class="val exp hl">¥${money(c.receivable)}</div></div>
     <div class="kpi"><div class="lab">已收金额合计</div><div class="val inc">¥${money(DB.orders.reduce((s,o)=>s+num(o.deposit)+num(o.final),0))}</div></div>
     <div class="kpi"><div class="lab">抹零/优惠合计</div><div class="val" style="color:#C08A2E">¥${money(c.rounded)}</div></div>`;
-  $('orderCount').textContent = `共 ${DB.orders.length} 条`;
+  const searched = filterOrders(DB.orders);
+  const filter = orderFilters.find(filter=>filter.id===selectedOrderFilter);
+  const matched = searched.filter(filter.match);
+  renderOrderFilters(searched);
+  $('orderCount').textContent = selectedOrderFilter==='all' && !norm(orderQuery)
+    ? `共 ${DB.orders.length} 条` : `筛选 ${matched.length} / 共 ${DB.orders.length} 条`;
 
   const box = $('orderList');
   if(!DB.orders.length){
@@ -346,19 +380,20 @@ function renderOrders(){
     return;
   }
 
-  const matched = filterOrders(DB.orders);
   /* 搜索结果提示条 */
   const hint = $('orderSearchHint');
   if(norm(orderQuery)){
     hint.innerHTML = matched.length
       ? `找到 <b>${matched.length}</b> 条匹配订单`
-      : `没有找到含「<b>${esc(orderQuery)}</b>」的订单，换个名字试试？`;
+      : `${selectedOrderFilter==='all'?'':`在「${filter.label}」中`}没有找到含「<b>${esc(orderQuery)}</b>」的订单`;
   } else {
     hint.innerHTML = '';
   }
 
   if(!matched.length){
-    box.innerHTML = `<div class="empty"><span class="big">🔍</span>没有匹配的订单<br><span style="font-size:11.5px">试试搜客人的名字、电话或订单编号</span></div>`;
+    box.innerHTML = norm(orderQuery)
+      ? `<div class="empty"><span class="big">🔍</span>当前条件下没有匹配的订单<br><span style="font-size:11.5px">调整关键词或切换筛选条件试试</span></div>`
+      : `<div class="empty"><span class="big">📦</span>暂无${filter.label}订单</div>`;
     return;
   }
 
@@ -368,7 +403,6 @@ function renderOrders(){
     const settled = w <= EPS;              /* 抹零后已结清 */
     const cut = num(o.cut);
     const showCut = cut > 0;
-    const ph = photoListSafe(o);
     return `<div class="row" data-kind="order" data-id="${esc(o.id)}">
       <div class="main">
         <div class="l1">
@@ -380,50 +414,26 @@ function renderOrders(){
           <span class="badge ${STATUS_CLS[o.status]||''}">${esc(o.status)}</span>
           ${showCut?`<span class="owe" style="color:#9C6500">抹零 −¥${money(cut)}</span>`:''}
           ${w>EPS?`<span class="owe">待收 ¥${money(w)}</span>`:''}
-          ${ph.length?`<span class="phcnt">📷 ${ph.length} 张成品</span>`:''}
         </div>
         ${o.address?`<div class="l3" style="color:#9AA8A0">📍 ${esc(o.address)}</div>`:''}
         ${o.tracking?`<div class="l3" style="color:#9AA8A0">📮 ${hl(o.tracking)}</div>`:''}
-        ${ph.length?`<div class="phstrip">${ph.slice(0,4).map((u,i)=>
-            `<img src="${esc(u)}" alt="成品图" data-ph="${esc(o.id)}:${i}">`).join('')}${
-            ph.length>4?`<span class="phmore">+${ph.length-4}</span>`:''}</div>`:''}
       </div>
-      <button type="button" class="rowrc" data-rc="${esc(o.id)}" title="生成订单截图">📸</button>
     </div>`;
   }).join('');
 }
 
-/* ---------- 订单图片放大看 ---------- */
-function lightbox(src){
-  const safe = safePhotoUrl(src) || (/^blob:/.test(String(src||'')) ? String(src) : '');
-  if(!safe){ toast('这张图打不开'); return; }
-  const d = document.createElement('div');
-  d.className = 'lb';
-  const img = document.createElement('img');
-  img.alt = '成品照片';
-  img.src = safe;
-  d.appendChild(img);
-  d.onclick = ()=> d.remove();
-  document.body.appendChild(d);
-}
-
 /* ---------- 渲染：收支明细 ---------- */
-function renderCash(){
-  const c = compute();
-  $('cashKpis').innerHTML = `
-    <div class="kpi"><div class="lab">总支出</div><div class="val exp">¥${money(c.expense)}</div></div>
-    <div class="kpi"><div class="lab">总收入</div><div class="val inc">¥${money(c.income)}</div></div>
-    <div class="kpi"><div class="lab">采购成本（布料+耗材+工具）</div><div class="val exp">¥${money(c.cost)}</div></div>
-    <div class="kpi"><div class="lab">发货运费</div><div class="val exp">¥${money(c.freight)}</div></div>`;
-  $('cashCount').textContent = `共 ${DB.cash.length} 条`;
+const cashKpiGroups = [
+  {id:'expense', label:'总支出', value:'expense', color:'exp', empty:'暂无支出记录', match:x=>num(x.exp)>0},
+  {id:'income', label:'总收入', value:'income', color:'inc', empty:'暂无收入记录', match:x=>num(x.inc)>0},
+  {id:'purchase', label:'采购成本（布料+耗材+工具）', value:'cost', color:'exp', empty:'暂无采购记录', match:x=>num(x.exp)>0 && String(x.type).startsWith('采购-')},
+  {id:'freight', label:'发货运费', value:'freight', color:'exp', empty:'暂无运费记录', match:x=>num(x.exp)>0 && x.type==='每周合并发货运费'},
+];
+const expandedCashKpis = new Set();
 
-  const box = $('cashList');
-  if(!DB.cash.length){
-    box.innerHTML = `<div class="empty"><span class="big">💰</span>还没有流水记录<br>点下方「+ 记一笔」开始记账</div>`;
-    return;
-  }
-  const sorted = DB.cash.slice().sort((a,b)=> (a.date<b.date?1:-1));
-  box.innerHTML = sorted.map(x=>{
+function cashRowsHtml(rows, emptyText='暂无流水记录'){
+  if(!rows.length) return `<div class="empty">${esc(emptyText)}</div>`;
+  return rows.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(x=>{
     const isInc = num(x.inc)>0;
     return `<div class="row" data-kind="cash" data-id="${esc(x.id)}">
       <div class="main">
@@ -436,6 +446,48 @@ function renderCash(){
       </div>
     </div>`;
   }).join('');
+}
+
+function toggleCashKpi(event){
+  const button = event.target.closest('[data-cash-toggle]');
+  if(!button || !$('cashKpis').contains(button)) return;
+  const group = cashKpiGroups.find(g=>g.id===button.dataset.cashToggle);
+  if(!group) return;
+  const expanded = !expandedCashKpis.has(group.id);
+  if(expanded) expandedCashKpis.add(group.id); else expandedCashKpis.delete(group.id);
+  const panel = $(button.getAttribute('aria-controls'));
+  if(expanded) panel.querySelector('.cash-kpi-list').innerHTML = cashRowsHtml(DB.cash.filter(group.match), group.empty);
+  button.setAttribute('aria-expanded', String(expanded));
+  panel.setAttribute('aria-hidden', String(!expanded));
+  panel.inert = !expanded;
+  button.closest('.cash-kpi').classList.toggle('is-open', expanded);
+}
+
+function renderCash(){
+  const c = compute();
+  $('cashKpis').innerHTML = cashKpiGroups.map(group=>{
+    const rows = DB.cash.filter(group.match);
+    const expanded = expandedCashKpis.has(group.id);
+    return `<div class="kpi cash-kpi${expanded?' is-open':''}">
+      <button type="button" class="cash-kpi-toggle" id="cash-toggle-${group.id}"
+        data-cash-toggle="${group.id}" aria-expanded="${expanded}" aria-controls="cash-details-${group.id}">
+        <span class="cash-kpi-summary"><span class="lab">${group.label}</span><span class="val ${group.color}">¥${money(c[group.value])}</span></span>
+        <span class="cash-kpi-action"><span>${rows.length} 条</span><svg class="cash-kpi-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+      </button>
+      <div class="cash-kpi-details" id="cash-details-${group.id}" role="region"
+        aria-labelledby="cash-toggle-${group.id}" aria-hidden="${!expanded}"${expanded?'':' inert'}>
+        <div class="cash-kpi-clip"><div class="cash-kpi-list">${expanded?cashRowsHtml(rows, group.empty):''}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+  $('cashCount').textContent = `共 ${DB.cash.length} 条`;
+
+  const box = $('cashList');
+  if(!DB.cash.length){
+    box.innerHTML = `<div class="empty"><span class="big">💰</span>还没有流水记录<br>点下方「+ 记一笔」开始记账</div>`;
+    return;
+  }
+  box.innerHTML = cashRowsHtml(DB.cash);
 }
 
 /* ---------- 渲染：月度汇总 ---------- */
@@ -585,7 +637,10 @@ function orderForm(o){
     <div class="field"><label>已收尾款（元）</label>
       <input type="number" id="f_final" inputmode="decimal" step="0.01" min="0"
         value="${o.final===''?'':esc(o.final)}" placeholder="没收到就填 0 或留空">
-      <div class="hint">只填实际到账金额（客人抹零后实付多少就填多少）</div></div>
+      <div class="hint">只填实际到账金额；修改金额会直接更新对应原流水，不会新增差额记录。</div></div>
+    <div class="field" id="receiptDateField" hidden><label>本次收款日期</label>
+      <input type="date" id="f_receiptDate" value="${esc(isNew ? o.date : today())}">
+      <div class="hint">保存后自动登记定金、尾款，无需再记收入；月度汇总按收款日期统计。</div></div>
     <div class="field"><label>抹零 / 优惠（元）</label>
       <input type="number" id="f_cut" inputmode="decimal" step="0.01" min="0"
         value="${o.cut===''?'':esc(o.cut)}" placeholder="抹掉的零头填这里，没有就留空">
@@ -598,29 +653,27 @@ function orderForm(o){
     </div>
     <div class="field"><label>订单状态</label>
       <select id="f_status">${ORDER_STATUS.map(s=>`<option${s===o.status?' selected':''}>${s}</option>`).join('')}</select></div>
-    <div class="field"><label>成品照片</label>
-      <div class="hint" style="margin:0 0 8px">做好拍几张传上来，列表里能看到缩略图；生成「订单截图」时也会自动带上</div>
-      <div class="hint" style="margin:0 0 8px;color:#C08A2E">📐 照片按 1:1 正方形展示，建议上传时裁成正方形，主体居中，避免被裁掉</div>
-      <div class="photoGrid" id="phGrid"></div>
-      <input type="file" id="phInput" accept="image/*" multiple style="display:none">
-      <button type="button" class="btn btn-sec btn-sm" id="phAdd" style="width:100%">📷 添加照片</button>
-      <div class="hint" id="phHint" style="margin-top:6px"></div></div>
     <div class="field"><label>备注</label>
       <textarea id="f_note" placeholder="加急、定制要求、退款情况等">${esc(o.note)}</textarea></div>
     <div class="sheet-btns">
       ${isNew?'':'<button class="btn btn-danger" id="delBtn">删除</button>'}
-      ${isNew?'':'<button class="btn btn-sec" id="rcBtn">📸 订单截图</button>'}
       <button class="btn btn-sec" id="cancelBtn">取消</button>
       <button class="btn btn-pri" id="saveBtn">保存</button>
     </div>
-    ${isNew?'':`<button class="btn btn-pri" id="rcBig" style="width:100%;margin-top:9px;background:linear-gradient(135deg,#5FA97F,#2E6B52)">📸 生成订单截图发给客人</button>
-    <div class="hint" style="text-align:center;margin-top:6px">生成一张图片，客人核对款式和金额、补完尾款就可以发货</div>`}`);
+    `);
 
+  $('f_date').addEventListener('change', () => {
+    if(isNew) $('f_receiptDate').value = $('f_date').value;
+  });
   o._id = o.id;
   const P=$('f_price'), D=$('f_deposit'), F=$('f_final'), C=$('f_cut');
   const R = ()=> Math.max(0, num(P.value) - num(D.value) - num(F.value));  /* 还没抹零的零头 */
 
   const calc = ()=>{
+    const needsReceiptDate = [['deposit',D,'收入-定金'],['final',F,'收入-尾款']].some(([kind,input,type])=>
+      num(input.value)>0 && num(input.value)!==num(o[kind]) &&
+      !DB.cash.some(row=>row.orderNo===o.no && row.type===type && num(row.inc)>0));
+    $('receiptDateField').hidden = !needsReceiptDate;
     const r = R(), cut = num(C.value);
     $('f_due').textContent = '¥'+money(num(P.value)-num(D.value));
     $('f_cutshow').textContent = '−¥'+money(cut);
@@ -766,62 +819,6 @@ function orderForm(o){
   });
   initStylePickers();
 
-  /* ---- 成品照片：先暂存在 pick 里，点「保存」才落到订单上 ---- */
-  let photos = photoListSafe(o).slice();
-  function renderPhotos(){
-    const box = $('phGrid'); if(!box) return;
-    box.innerHTML = photos.length
-      ? photos.map((u,i)=>`<div class="phitem"><img src="${esc(u)}" alt="成品照片${i+1}"><span class="phdel" data-i="${i}" title="删除">✕</span></div>`).join('')
-      : `<div class="phempty">还没有照片</div>`;
-    box.querySelectorAll('.phdel').forEach(b=>{
-      b.onclick = ()=>{
-        photos.splice(Number(b.dataset.i), 1);
-        renderPhotos(); updatePhotoHint();
-      };
-    });
-    const h = $('phHint');
-    if(h){
-      const total = photos.reduce((s,u)=> s + photoBytes(u), 0);
-      h.textContent = photos.length
-        ? `已添加 ${photos.length} 张（约 ${humanBytes(total)}）· 点右上角 ✕ 可删除`
-        : '最多 ' + PH_MAX + ' 张，上传时会自动压缩，不占太多空间';
-    }
-  }
-  function updatePhotoHint(){
-    const h = $('phHint'); if(!h) return;
-    const total = photos.reduce((s,u)=> s + photoBytes(u), 0);
-    h.textContent = photos.length
-      ? `已添加 ${photos.length} 张（约 ${humanBytes(total)}）· 点右上角 ✕ 可删除`
-      : '最多 ' + PH_MAX + ' 张，上传时会自动压缩，不占太多空间';
-  }
-  const phAdd = $('phAdd'), phInput = $('phInput');
-  if(phAdd && phInput){
-    phAdd.onclick = ()=>{
-      if(photos.length >= PH_MAX){ toast('最多只能放 ' + PH_MAX + ' 张照片'); return; }
-      phInput.value = ''; phInput.click();
-    };
-    phInput.onchange = async ()=>{
-      const files = Array.from(phInput.files || []);
-      if(!files.length) return;
-      const room = PH_MAX - photos.length;
-      const use = files.slice(0, room);
-      if(files.length > room) toast('最多 ' + PH_MAX + ' 张，多余的没有添加');
-      phAdd.disabled = true; phAdd.textContent = '正在处理照片…';
-      let ok = 0, bad = 0;
-      for(const f of use){
-        try{
-          const r = await readPhotoFile(f);
-          photos.push(r.url); ok++;
-        }catch(e){ bad++; }
-      }
-      phAdd.disabled = false; phAdd.textContent = '📷 添加照片';
-      renderPhotos();
-      if(ok) toast('已添加 ' + ok + ' 张 ✓');
-      if(bad) toast(bad + ' 张没读成功，换一张试试');
-    };
-  }
-  renderPhotos();
-
   [P,D,F,C].forEach(el=> el.addEventListener('input', calc));
   calc();
 
@@ -834,6 +831,7 @@ function orderForm(o){
     if(!customer){ toast('请填客户名称'); return; }
     if(!style){ toast('请填包包款式'); return; }
     if($('f_price').value===''||num($('f_price').value)<0){ toast('请填订单报价'); return; }
+    if (!$('receiptDateField').hidden && !$('f_receiptDate').value) { toast('请填本次收款日期'); return; }
 
     let no=$('f_no').value.trim();
     const rec = {
@@ -849,7 +847,7 @@ function orderForm(o){
       cut: num($('f_cut').value),
       status: $('f_status').value,
       note: $('f_note').value.trim(),
-      ph: photos.slice()
+      ph: Array.isArray(o.ph) ? o.ph.slice() : []
     };
     if(!no) rec.no = genOrderNo(date);
 
@@ -859,7 +857,8 @@ function orderForm(o){
     } else {
       DB.orders.push(rec);
     }
-    if (!await save()) return; closeSheet(); renderAll(); toast('已保存 ✓');
+    if (!await save(DB, {receiptDate: $('receiptDateField').hidden ? undefined : $('f_receiptDate').value})) return;
+    closeSheet(); renderAll(); toast('已保存，收支和汇总已同步 ✓');
   };
   if($('delBtn')){
     $('delBtn').onclick = async ()=>{
@@ -868,30 +867,7 @@ function orderForm(o){
       if (!await save()) return; closeSheet(); renderAll(); toast('已删除');
     };
   }
-  /* 订单截图：直接拿当前表单里的内容生成，不用先保存 */
-  const snapForShot = ()=>({
-    id: o._id || '', date: $('f_date').value.trim(),
-    no: $('f_no').value.trim() || (o.no||''),
-    customer: $('f_customer').value.trim(),
-    style: $('f_style').value.trim(),
-    address: $('f_address').value.trim(),
-    tracking: $('f_tracking').value.trim(),
-    price: num($('f_price').value),
-    deposit: num($('f_deposit').value),
-    final: num($('f_final').value),
-    cut: num($('f_cut').value),
-    status: $('f_status').value,
-    note: $('f_note').value.trim(),
-    ph: photos.slice()
-  });
-  const doShot = ()=>{
-    const s = snapForShot();
-    if(!s.customer && !s.style){ toast('先把客户和款式填一下吧'); return; }
-    if(!s.no) s.no = '(未编号)';
-    shotForm(s);
-  };
-  if($('rcBig')) $('rcBig').onclick = doShot;
-  if($('rcBtn')) $('rcBtn').onclick = doShot;
+
 }
 
 /* ---------- 表单：收支 ---------- */
@@ -907,7 +883,7 @@ function cashForm(x){
       <select id="c_type">${CASH_TYPES.map(t=>`<option${t===x.type?' selected':''}>${t}</option>`).join('')}</select></div>
     <div class="field"><label>对应订单编号（收入类建议选）</label>
       <select id="c_orderNo"><option value="">— 不关联订单 —</option>${orderOpts}</select>
-      <div class="hint">采购、运费类可以留空</div></div>
+      <div class="hint">订单定金、尾款会自动登记，请勿重复记账；修改关联收入也会同步订单已收金额。</div></div>
     <div class="field"><label>物品/事项说明 <span class="req">*</span></label>
       <input type="text" id="c_desc" value="${esc(x.desc)}"
         placeholder="如 厚帆布2米 / 【第38周合并多单发货运费，共3个包裹】">
@@ -1093,554 +1069,6 @@ function styleForm(){
   openSheet(render()); bind();
 }
 
-/* ============================================================
-   成品照片：存在订单记录里（o.ph = [dataURL,...]）
-   上传前先压缩，避免把手机存储挤爆
-   ============================================================ */
-const PH_MAX   = 6;        /* 单个订单最多存几张 */
-const PH_EDGE  = 900;      /* 长边压到 900px，够手机看清细节 */
-const PH_QUAL  = 0.72;     /* jpeg 质量 */
-
-function photoList(o){
-  return (o && Array.isArray(o.ph)) ? o.ph.filter(x => typeof x === 'string' && !!safePhotoUrl(x)) : [];
-}
-/* 照片地址只允许「data:image/...;base64,<合法base64>」，其余一律丢掉。
-   这道校验既是安全边界（防止 '" onerror=...' 这类串逃出 HTML 属性），
-   也顺手过滤掉损坏的数据。 */
-function safePhotoUrl(u){
-  const s = String(u||'');
-  if (/^\/images\/[a-f0-9]{32}\.jpg$/.test(s)) return s;
-  if(!/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/.test(s)) return '';
-  return s;
-}
-function photoListSafe(o){
-  return photoList(o).map(safePhotoUrl).filter(Boolean);
-}
-/* 粗略估算 dataURL 体积（base64 后约为原字节的 4/3） */
-function photoBytes(u){
-  const s = String(u||'');
-  if (imageSizes[s] !== undefined) return imageSizes[s];
-  const i = s.indexOf(',');
-  return i < 0 ? 0 : Math.round((s.length - i - 1) * 3 / 4);
-}
-function humanBytes(b){
-  if(b < 1024) return b + ' B';
-  if(b < 1024*1024) return (b/1024).toFixed(0) + ' KB';
-  return (b/1024/1024).toFixed(1) + ' MB';
-}
-/* 把一张 File 读成压缩后的 dataURL */
-async function readPhotoFile(file) {
-  const compressed = await compressPhotoFile(file);
-  const blob = await (await fetch(compressed.url)).blob();
-  const form = new FormData();
-  form.append('file', blob, 'photo.jpg');
-  const uploaded = await request('/api/images', {method: 'POST', body: form});
-  imageSizes[uploaded.url] = compressed.bytes;
-  return {...compressed, url: uploaded.url};
-}
-
-function compressPhotoFile(file){
-  return new Promise((resolve, reject)=>{
-    if(!file || String(file.type||'').indexOf('image/') !== 0){
-      reject(new Error('not-image')); return;
-    }
-    const fr = new FileReader();
-    fr.onerror = ()=> reject(new Error('read-fail'));
-    fr.onload = ()=>{
-      const img = new Image();
-      img.onerror = ()=> reject(new Error('decode-fail'));
-      img.onload = ()=>{
-        try{
-          const w0 = img.naturalWidth || img.width || 0;
-          const h0 = img.naturalHeight || img.height || 0;
-          if(!w0 || !h0){ reject(new Error('bad-size')); return; }
-          const scale = Math.min(1, PH_EDGE / Math.max(w0, h0));
-          const w = Math.max(1, Math.round(w0 * scale));
-          const h = Math.max(1, Math.round(h0 * scale));
-          const cv = document.createElement('canvas');
-          cv.width = w; cv.height = h;
-          const cx = cv.getContext('2d');
-          /* 白底，避免 PNG 透明区变黑 */
-          cx.fillStyle = '#FFFFFF'; cx.fillRect(0,0,w,h);
-          cx.drawImage(img, 0, 0, w, h);
-          let out = '';
-          try{ out = cv.toDataURL('image/jpeg', PH_QUAL); }catch(e){ out = ''; }
-          if(!out || out.indexOf('data:image') !== 0){
-            /* 少数浏览器 canvas 受限，退回原图 */
-            out = String(fr.result||'');
-          }
-          if(!out || out.indexOf('data:image') !== 0){ reject(new Error('encode-fail')); return; }
-          resolve({ url: out, w, h, bytes: photoBytes(out) });
-        }catch(e){ reject(e); }
-      };
-      img.src = String(fr.result||'');
-    };
-    fr.readAsDataURL(file);
-  });
-}
-
-/* ============================================================
-   配色 / 字体（供 Excel 导出与统计视图使用）
-   ============================================================ */
-const RC = {
-  W: 720, PAD: 36,
-  bg:'#FFFFFF', soft:'#F6FBF8', bd:'#DCE9E2', bdSoft:'#ECF4EF',
-  tx:'#3F4A45', muted:'#8A9A92', title:'#2C3A34',
-  brand:'#2E6B52', brandSoft:'#E9F5EE',
-  pink:'#B4655A', pinkSoft:'#FDF0F2',
-  hl:'#FFF6D6', hlTx:'#9C6500'
-};
-const RC_FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif';
-
-function rcRoundRect(cx,x,y,w,h,r){
-  const rr = Math.min(r, w/2, h/2);
-  cx.beginPath();
-  cx.moveTo(x+rr, y);
-  cx.arcTo(x+w, y,   x+w, y+h, rr);
-  cx.arcTo(x+w, y+h, x,   y+h, rr);
-  cx.arcTo(x,   y+h, x,   y,   rr);
-  cx.arcTo(x,   y,   x+w, y,   rr);
-  cx.closePath();
-}
-function rcText(cx, text, x, y, opt){
-  const o = opt || {};
-  cx.font = (o.weight ? o.weight + ' ' : '') + (o.size || 14) + 'px ' + RC_FONT;
-  cx.fillStyle = o.color || RC.tx;
-  cx.textAlign = o.align || 'left';
-  cx.textBaseline = o.base || 'alphabetic';
-  cx.fillText(String(text == null ? '' : text), x, y);
-}
-/* 按宽度折行，中英文混排都能断 */
-function rcWrap(cx, text, maxW){
-  const src = String(text == null ? '' : text);
-  const out = [];
-  let line = '';
-  const push = ()=>{ if(line !== '') out.push(line); line = ''; };
-  for(const ch of src){
-    if(ch === '\n'){ push(); continue; }
-    const t = line + ch;
-    if(cx.measureText(t).width > maxW && line !== ''){ push(); line = ch; }
-    else line = t;
-  }
-  push();
-  return out.length ? out : [''];
-}
-
-/* ============================================================
-   订单截图：生成一张简洁的订单详情图，保存到相册 / 发给客人
-   ============================================================ */
-const SHOT_W = 700;          /* 图片宽度 */
-const SHOT_PAD = 32;         /* 左右留白 */
-const SHOT_PH_MAX = 4;       /* 最多带几张成品照 */
-const SHOT_PH_COLS = 2;      /* 每行几张（正方形 1:1 排布） */
-
-function shotRoundRect(cx,x,y,w,h,r){
-  const rr = Math.min(r, w/2, h/2);
-  cx.beginPath();
-  cx.moveTo(x+rr, y);
-  cx.arcTo(x+w, y,   x+w, y+h, rr);
-  cx.arcTo(x+w, y+h, x,   y+h, rr);
-  cx.arcTo(x,   y+h, x,   y,   rr);
-  cx.arcTo(x,   y,   x+w, y,   rr);
-  cx.closePath();
-}
-function shotText(cx, text, x, y, opt){
-  const o = opt || {};
-  cx.font = (o.weight ? o.weight + ' ' : '') + (o.size || 14) + 'px ' + RC_FONT;
-  cx.fillStyle = o.color || RC.tx;
-  cx.textAlign = o.align || 'left';
-  cx.textBaseline = o.base || 'alphabetic';
-  cx.fillText(String(text == null ? '' : text), x, y);
-}
-function shotLines(cx, text, maxW, opt){
-  const o = opt || {};
-  /* 必须先设好字体再量宽，否则会沿用上一次的字体，导致换行算窄、文字溢出右边界 */
-  cx.font = (o.weight ? o.weight + ' ' : '') + (o.size || 13.5) + 'px ' + RC_FONT;
-  const src = String(text == null ? '' : text);
-  const out = []; let line = '';
-  const push = ()=>{ if(line !== '') out.push(line); line = ''; };
-  for(const ch of src){
-    if(ch === '\n'){ push(); continue; }
-    const t = line + ch;
-    if(cx.measureText(t).width > maxW && line !== ''){ push(); line = ch; }
-    else line = t;
-  }
-  push();
-  return out.length ? out : [''];
-}
-/* 一行「标签 ……… 金额」，点线引导到右端 */
-function shotRow(cx, x, y, w, label, value, opt){
-  const o = opt || {};
-  const size = o.size || 15;
-  cx.textAlign = 'left'; cx.textBaseline = 'alphabetic';
-  cx.font = (o.weight || '400') + ' ' + size + 'px ' + RC_FONT;
-  cx.fillStyle = o.color || RC.tx;
-  cx.fillText(label, x, y);
-  cx.textAlign = 'right';
-  cx.font = (o.vweight || '600') + ' ' + (o.vsize || size) + 'px ' + RC_FONT;
-  cx.fillStyle = o.vcolor || o.color || RC.tx;
-  cx.fillText(value, x + w, y);
-  cx.textAlign = 'left';
-}
-
-/* 图片加载（画截图用） */
-function loadImg(src){
-  return new Promise((resolve, reject)=>{
-    const img = new Image();
-    img.onload = ()=> resolve(img);
-    img.onerror = ()=> reject(new Error('img-load-fail'));
-    img.src = src;
-  });
-}
-/* 等比裁剪填充到 (dx,dy,dw,dh) */
-function drawCover(cx, img, dx, dy, dw, dh){
-  const ir = img.width / img.height;
-  const br = dw / dh;
-  let sw, sh, sx, sy;
-  if(ir > br){ sh = img.height; sw = sh * br; sx = (img.width - sw)/2; sy = 0; }
-  else { sw = img.width; sh = sw / br; sx = 0; sy = (img.height - sh)/2; }
-  cx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-}
-
-/* 生成订单截图 PNG Blob */
-async function buildShotBlob(o){
-  const cv = document.createElement('canvas');
-  const cx = cv.getContext('2d');
-  const W = SHOT_W, PAD = SHOT_PAD, CW = W - PAD*2;
-  const dpr = 2;
-  const money0 = v => (Math.round(num(v)*100)/100).toFixed(2);
-
-  const photos = photoListSafe(o);
-  const shown = photos.slice(0, SHOT_PH_MAX);
-  const more  = photos.length - shown.length;
-  const items = textToStyles(o.style);
-  const plain = items.length ? null
-    : String(o.style||'').split(/\s*\+\s*/).map(s=>String(s).trim()).filter(Boolean);
-
-  const price = num(o.price), dep = num(o.deposit), fin = num(o.final), cut = num(o.cut);
-  const oweV = Math.max(0, owe(o));
-  const settled = oweV <= EPS;
-
-  /* ---- 先量高度 ---- */
-  let H = 0;
-  H += 74;                                        /* 标题区 */
-  H += 34 + 28;                                   /* 客户 */
-  if(o.no) H += 28;                               /* 编号 */
-  if(o.address) H += (Math.min(3, shotLines(cx, String(o.address), CW-68-4, {size:13.5}).length) - 1) * 20 + 28;  /* 收货地址 */
-  if(o.tracking) H += 28;                         /* 物流单号 */
-  H += 18;
-  H += 30;                                        /* 分割线 */
-  H += 26;                                        /* 款式标题 */
-  H += (items.length || plain ? Math.max(1, items.length || plain.length) : 1) * 26;
-  H += 14 + 26;                                   /* 分割线 + 金额标题 */
-  H += 30 * (1 + (dep>0?1:0) + (fin>0?1:0) + (cut>0?1:0));
-  H += 72;                                        /* 待补尾款块 */
-  if(shown.length){
-    const gcols = Math.min(SHOT_PH_COLS, shown.length);
-    const gside = Math.floor((CW - 10*(gcols-1)) / gcols);
-    const grows = Math.ceil(shown.length / gcols);
-    H += 26 + (grows*gside + (grows-1)*10) + (more>0?20:0) + 18;
-  }
-  if(o.note){ H += 14 + 20 + 20*Math.min(3, shotLines(cx, o.note, CW-24, {size:13}).length); }
-  H += 46;                                        /* 页脚 */
-  H += PAD;
-
-  cv.width = W*dpr; cv.height = Math.round(H)*dpr;
-
-  /* ---- 背景 ---- */
-  cx.fillStyle = RC.bg;
-  cx.fillRect(0,0,cv.width,cv.height);
-  cx.save(); cx.scale(dpr,dpr);
-
-  let y = 0;
-
-  /* ---- 标题区（品牌绿） ---- */
-  cx.fillStyle = RC.brand;
-  cx.fillRect(0,0,W,74);
-  shotText(cx, '手作包包 · 订单详情', PAD, 40, {size:17, weight:'700', color:'#FFFFFF'});
-  shotText(cx, today(), W-PAD, 40, {size:12.5, color:'#CDE6D9', align:'right'});
-  y = 74;
-
-  /* ---- 客户 / 编号 / 收货地址 / 物流单号 ---- */
-  y += 34;
-  const LBL = 68;   /* 标签列宽：容得下「收货地址」四个字 + 间距 */
-  const addrLines = o.address ? shotLines(cx, String(o.address), CW - LBL - 4, {size:13.5}).slice(0, 3) : [];
-  shotText(cx, '客户', PAD, y, {size:13, color:RC.muted});
-  shotText(cx, String(o.customer||'—'), PAD+LBL, y, {size:16, weight:'700', color:RC.title});
-  y += 28;
-  if(o.no){
-    shotText(cx, '编号', PAD, y, {size:13, color:RC.muted});
-    shotText(cx, String(o.no), PAD+LBL, y, {size:14, color:RC.tx});
-    y += 28;
-  }
-  if(addrLines.length){
-    shotText(cx, '收货地址', PAD, y, {size:13, color:RC.muted});
-    addrLines.forEach((ln,i)=>{
-      shotText(cx, ln, PAD+LBL, y + i*20, {size:13.5, color:RC.tx});
-    });
-    y += (addrLines.length - 1) * 20 + 28;
-  }
-  if(o.tracking){
-    shotText(cx, '物流单号', PAD, y, {size:13, color:RC.muted});
-    shotText(cx, String(o.tracking), PAD+LBL, y, {size:13.5, color:RC.tx});
-    y += 28;
-  }
-  y += 18;
-
-  /* 分割线 */
-  const hr = (yy)=>{
-    cx.strokeStyle = RC.bdSoft; cx.lineWidth = 1;
-    cx.beginPath(); cx.moveTo(PAD, yy+0.5); cx.lineTo(W-PAD, yy+0.5); cx.stroke();
-  };
-  hr(y); y += 30;
-
-  /* ---- 款式明细 ---- */
-  shotText(cx, '款式明细', PAD, y, {size:14, weight:'700', color:RC.title});
-  y += 24;
-  if(items.length){
-    items.forEach(it=>{
-      const pr = stylePrice(it.name), q = num(it.qty) || 1;
-      shotRow(cx, PAD, y, CW, it.name + (q>1 ? ' ×'+q : ''), pr>0 ? '¥'+money0(pr*q) : '—',
-              {size:14, color:RC.tx, vcolor:RC.tx});
-      y += 26;
-    });
-  } else if(plain && plain.length){
-    plain.forEach(s=>{ shotRow(cx, PAD, y, CW, s, '', {size:14, color:RC.tx}); y += 26; });
-  } else {
-    shotRow(cx, PAD, y, CW, '—', '', {size:14, color:RC.muted}); y += 26;
-  }
-  y += 6;
-  hr(y); y += 28;
-
-  /* ---- 金额明细（全部显示） ---- */
-  shotText(cx, '金额', PAD, y, {size:14, weight:'700', color:RC.title});
-  y += 26;
-  shotRow(cx, PAD, y, CW, '订单报价', '¥'+money0(price), {size:14.5, color:RC.tx, vcolor:RC.title});
-  y += 30;
-  if(dep > 0){ shotRow(cx, PAD, y, CW, '已收定金', '−¥'+money0(dep), {size:14.5, color:RC.tx, vcolor:RC.brand}); y += 30; }
-  if(fin > 0){ shotRow(cx, PAD, y, CW, '已收尾款', '−¥'+money0(fin), {size:14.5, color:RC.tx, vcolor:RC.brand}); y += 30; }
-  if(cut > 0){ shotRow(cx, PAD, y, CW, '抹零 / 优惠', '−¥'+money0(cut), {size:14.5, color:RC.tx, vcolor:RC.pink}); y += 30; }
-  y += 8;
-
-  /* ---- 待补尾款（高亮块） ---- */
-  const blockH = 64;
-  const bg = settled ? RC.brandSoft : RC.hl;
-  cx.fillStyle = bg;
-  shotRoundRect(cx, PAD, y, CW, blockH, 12); cx.fill();
-  shotText(cx, settled ? '尾款已结清 ✓' : '待补尾款',
-           PAD+16, y+26, {size:14, weight:'600', color: settled ? RC.brand : RC.hlTx});
-  if(settled){
-    shotText(cx, '无需再付款', PAD+CW-16, y+26, {size:13, color:RC.brand, align:'right'});
-    shotText(cx, '感谢你的耐心等待', PAD+16, y+48, {size:12, color:RC.muted});
-  } else {
-    shotText(cx, '¥'+money0(oweV), PAD+16, y+54,
-             {size:26, weight:'700', color:RC.hlTx, base:'alphabetic'});
-    shotText(cx, '确认后补付这笔尾款', PAD+CW-16, y+50,
-             {size:12, color:RC.muted, align:'right'});
-  }
-  y += blockH + 24;
-
-  /* ---- 成品照片（1:1 正方形） ---- */
-  let phBlockTop = 0;
-  if(shown.length){
-    const gap = 10;
-    const cols = Math.min(SHOT_PH_COLS, shown.length);
-    const side = Math.floor((CW - gap*(cols-1)) / cols);   /* 正方形边长 */
-    const rows = Math.ceil(shown.length / cols);
-    const gridH = rows*side + (rows-1)*gap;
-
-    shotText(cx, '成品照片（'+photos.length+' 张）', PAD, y, {size:14, weight:'700', color:RC.title});
-    /* 同行右侧说明：照片按 1:1 正方形展示 */
-    shotText(cx, '1:1 正方形', PAD + CW, y, {size:11.5, color:'#9AA8A0', align:'right'});
-    y += 26;
-    phBlockTop = y;
-
-    let imgs = [];
-    for(let i=0;i<shown.length;i++){ try{ imgs.push(await loadImg(shown[i])); }catch(e){ imgs.push(null); } }
-    for(let i=0;i<shown.length;i++){
-      const r = Math.floor(i/cols), c = i%cols;
-      const dx = PAD + c*(side+gap);
-      const dy = y + r*(side+gap);
-      cx.save();
-      shotRoundRect(cx, dx, dy, side, side, 10); cx.clip();
-      cx.fillStyle = '#F2F7F4'; cx.fillRect(dx, dy, side, side);
-      if(imgs[i]) drawCover(cx, imgs[i], dx, dy, side, side);
-      cx.restore();
-      cx.strokeStyle = RC.bd; cx.lineWidth = 1;
-      shotRoundRect(cx, dx+0.5, dy+0.5, side-1, side-1, 10); cx.stroke();
-    }
-
-    /* 提醒已画在标题行右侧，此处不再重复 */
-
-    y += gridH + 8;
-    if(more > 0){
-      shotText(cx, '另有 '+more+' 张照片，可以单独发给你～', PAD, y+12, {size:12, color:RC.muted});
-      y += 20;
-    }
-    y += 10;
-  }
-
-  /* ---- 备注 ---- */
-  if(o.note){
-    hr(y); y += 22;
-    shotText(cx, '备注', PAD, y, {size:13, weight:'700', color:RC.title});
-    const noteLines = shotLines(cx, o.note, CW-24, {size:13}).slice(0,3);
-    noteLines.forEach((ln,i)=>{
-      shotText(cx, ln, PAD+38, y + i*20, {size:13, color:RC.tx});
-    });
-    y += noteLines.length*20 + 4;
-  }
-
-  /* ---- 页脚 ---- */
-  y += 14;
-  hr(y); y += 24;
-  shotText(cx, '确认无误后补付尾款，我就安排发货啦，谢谢～', PAD, y, {size:12, color:RC.muted});
-  y += 22;
-  shotText(cx, String(o.customer||'') + '　·　' + String(o.no||''), PAD, y, {size:11, color:'#B7C4BD'});
-
-  cx.restore();
-
-  /* ---- 裁到真实高度 ---- */
-  const H2 = Math.min(Math.round(y + PAD), Math.round(H));
-  const out = document.createElement('canvas');
-  out.width = W*dpr; out.height = H2*dpr;
-  const ocx = out.getContext('2d');
-  ocx.drawImage(cx.canvas, 0, 0, W*dpr, H2*dpr, 0, 0, W*dpr, H2*dpr);
-
-  return await new Promise(res=>{
-    if(out.toBlob) out.toBlob(b=> res(b), 'image/png');
-    else {
-      try{
-        const d = out.toDataURL('image/png');
-        const bin = atob(d.split(',')[1]);
-        const arr = new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
-        res(new Blob([arr], {type:'image/png'}));
-      }catch(e){ res(null); }
-    }
-  });
-}
-
-/* 文字版（图片发不出去时的兜底） */
-function shotText2(o){
-  const items = textToStyles(o.style);
-  const price = num(o.price), dep = num(o.deposit), fin = num(o.final), cut = num(o.cut);
-  const oweV = Math.max(0, owe(o));
-  const m = v => (Math.round(num(v)*100)/100).toFixed(2);
-  const L = [];
-  L.push('【订单详情】');
-  L.push('客户：' + String(o.customer||'—'));
-  L.push('编号：' + String(o.no||'—') + '　日期：' + String(o.date||'—'));
-  if(o.address)  L.push('收货地址：' + String(o.address));
-  if(o.tracking) L.push('物流单号：' + String(o.tracking));
-  L.push('────────────');
-  if(items.length){
-    items.forEach(it=>{
-      const pr = stylePrice(it.name), q = num(it.qty) || 1;
-      L.push('· ' + it.name + (q>1 ? ' ×'+q : '') + (pr>0 ? '　¥'+m(pr*q) : ''));
-    });
-  } else {
-    String(o.style||'').split(/\s*\+\s*/).filter(s=>String(s).trim())
-      .forEach(s=>L.push('· ' + String(s).trim()));
-    if(!String(o.style||'').trim()) L.push('· —');
-  }
-  L.push('────────────');
-  L.push('订单报价　¥' + m(price));
-  if(dep > 0) L.push('已收定金　−¥' + m(dep));
-  if(fin > 0) L.push('已收尾款　−¥' + m(fin));
-  if(cut > 0) L.push('抹零/优惠　−¥' + m(cut));
-  L.push(oweV <= EPS ? '尾款已结清 ✓ 无需再付款' : '待补尾款　¥' + m(oweV));
-  if(photoList(o).length) L.push('（成品照片 ' + photoList(o).length + ' 张，见图片）');
-  if(o.note) L.push('备注：' + String(o.note));
-  L.push('────────────');
-  L.push('确认无误后补付尾款，我就安排发货啦，谢谢～');
-  return L.join('\n');
-}
-
-/* 截图预览弹层：保存到相册 / 分享 / 复制文字版 */
-async function shotForm(o){
-  openSheet(`
-    <h2>订单截图</h2>
-    <div class="rcwrap" id="shotWrap"><div class="rcload">正在生成图片…</div></div>
-    <div class="sheet-btns" style="flex-direction:column;gap:9px">
-      <button class="btn btn-pri" id="shotSave">📥 保存到相册</button>
-      <button class="btn btn-sec" id="shotShare">📤 分享给客人</button>
-      <button class="btn btn-sec" id="shotCopy">📋 复制文字版</button>
-      <button class="btn btn-sec" id="shotClose">关闭</button>
-    </div>
-    <div class="rc-tip">手机若没自动存进相册，可长按上面的图片选择「保存图片」</div>
-  `);
-  const wrap = $('shotWrap');
-  let url = null, blob = null;
-  const cleanup = ()=>{ if(url) URL.revokeObjectURL(url); };
-
-  try{
-    blob = await buildShotBlob(o);
-    if(!blob) throw new Error('no-blob');
-    url = URL.createObjectURL(blob);
-    if($('shotWrap')) $('shotWrap').innerHTML = `<img id="shotImg" alt="订单截图" src="${url}">`;
-  }catch(e){
-    if(wrap) wrap.innerHTML = `<div class="rcload">图片生成失败，可点下面「复制文字版」发给客人。</div>`;
-  }
-
-  const fileName = ()=>{
-    const nm = String(o.customer||'订单').replace(/[\\/:*?"<>|]/g,'');
-    return `订单详情_${nm}_${String(o.no||today()).replace(/[\\/:*?"<>|]/g,'')}.png`;
-  };
-
-  $('shotClose').onclick = ()=>{ cleanup(); closeSheet(); };
-
-  $('shotSave').onclick = async ()=>{
-    if(!blob){ toast('图片还没生成好，稍等一下'); return; }
-    const f = new File([blob], fileName(), {type:'image/png'});
-    /* 手机：优先走系统分享面板（能直接存相册 / 发微信） */
-    if(navigator.canShare && navigator.canShare({files:[f]})){
-      try{
-        await navigator.share({files:[f], title:'订单详情'});
-        toast('已打开分享，选择「存储图像」即可存进相册 ✓');
-        return;
-      }catch(e){ /* 用户取消或失败 → 退回下载 */ }
-    }
-    download(blob, fileName());
-    toast('图片已保存 ✓ 去「下载」或相册查看');
-  };
-
-  $('shotShare').onclick = async ()=>{
-    if(!blob){ toast('图片还没生成好，稍等一下'); return; }
-    const f = new File([blob], fileName(), {type:'image/png'});
-    const text = shotText2(o);
-    try{
-      if(navigator.canShare && navigator.canShare({files:[f]})){
-        await navigator.share({files:[f], text, title:'订单详情'});
-      } else if(navigator.share){
-        await navigator.share({text, title:'订单详情'});
-      } else {
-        await copyTextTo(text); toast('当前浏览器不支持直接分享，已复制文字版 ✓');
-      }
-    }catch(e){ /* 取消忽略 */ }
-  };
-
-  $('shotCopy').onclick = async ()=>{
-    await copyTextTo(shotText2(o));
-    toast('已复制，去微信粘贴 ✓');
-  };
-}
-async function copyTextTo(t){
-  try{
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      await navigator.clipboard.writeText(t); return true;
-    }
-  }catch(e){}
-  try{
-    const ta = document.createElement('textarea');
-    ta.value = t; ta.style.position='fixed'; ta.style.left='-9999px';
-    document.body.appendChild(ta); ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  }catch(e){ return false; }
-}
-
 /* ---------- 备份 / 恢复 ---------- */
 async function backup(){
   try {
@@ -1659,7 +1087,7 @@ function restore(){
       const cash=Array.isArray(data.cash)?data.cash:data.transactions;
       if(!Array.isArray(data.orders)||!Array.isArray(cash)) throw new Error('文件格式不正确');
       if(!confirm(`将导入 ${data.orders.length} 条订单、${cash.length} 条流水。\n当前数据会被覆盖，确定继续？`)) return;
-      if(!await save(raw)) return;
+      if(!await save(raw, {restore: true})) return;
       renderAll(); toast('恢复成功 ✓');
     } catch(error) { toast(error instanceof SyntaxError?'文件格式不正确':error.message, 4000); }
   };
@@ -2084,6 +1512,8 @@ document.querySelectorAll('.tab').forEach(t=>{
 $('addBtn').onclick = onAdd;
 $('exportBtn').onclick = exportExcel;
 $('menuBtn').onclick = menuForm;
+$('cashKpis').addEventListener('click', toggleCashKpi);
+$('orderFilters').addEventListener('click', selectOrderFilter);
 
 /* ---------- 订单搜索 ---------- */
 (function initSearch(){
@@ -2099,19 +1529,8 @@ $('menuBtn').onclick = menuForm;
   clr.onclick = ()=>{ inp.value=''; orderQuery=''; clr.classList.remove('on'); renderOrders(); inp.focus(); };
 })();
 
-// 列表点击 → 编辑 / 看大图 / 订单截图
+// 列表点击 → 编辑
 function onListClick(e){
-  /* 缩略图：直接放大看，不打开编辑 */
-  const thumb = e.target.closest('img[data-ph]');
-  if(thumb){ e.stopPropagation(); lightbox(thumb.src); return; }
-  /* 行尾的截图按钮 */
-  const rc = e.target.closest('[data-rc]');
-  if(rc){
-    e.stopPropagation();
-    const o = DB.orders.find(x=>x.id===rc.dataset.rc);
-    if(o) shotForm(o);
-    return;
-  }
   const row=e.target.closest('.row');
   if(!row) return;
   const id=row.dataset.id, kind=row.dataset.kind;
@@ -2163,5 +1582,10 @@ function showInstallTip(){
 }
 
 
-return () => { document.removeEventListener('click', onListClick); clearTimeout(toast._t); };
+return () => {
+  document.removeEventListener('click', onListClick);
+  $('cashKpis').removeEventListener('click', toggleCashKpi);
+  $('orderFilters').removeEventListener('click', selectOrderFilter);
+  clearTimeout(toast._t);
+};
 }

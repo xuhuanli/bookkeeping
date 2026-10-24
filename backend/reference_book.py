@@ -1,11 +1,12 @@
-"""The reference app's independent order and cash books, backed by local SQLite."""
+"""Reference-shaped books with automatic order receipt synchronization."""
 from copy import deepcopy
+from datetime import date
 import re
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import ledger
 from .legacy_import import STATUSES
-from .models import OrderInput, StyleInput, plain
+from .models import OrderInput, StyleInput, plain, today
 
 LABELS = {value: key for key, value in STATUSES.items()}
 
@@ -41,7 +42,68 @@ def to_reference(state):
             'styles': [{'name': s['name'], 'price': s.get('price')} for s in state['styles']]}
 
 
-def from_reference(source, previous):
+def sync_receipts(state, previous, receipt_date=None):
+    """Order amount edits win; cash-only amount edits flow back to the order.
+
+    Existing receipt IDs and dates survive amount corrections. Only the first
+    deposit/final receipt creates a row; later edits update that same receipt.
+    Unchanged historical mismatches are preserved rather than silently rewritten.
+    """
+    old_orders = {o['id']: o for o in previous['orders']}
+
+    def receipts(snapshot, identifier, kind):
+        return [r for r in snapshot['transactions'] if r.get('orderId') == identifier
+                and r['type'] == 'income' and r.get('kind') == kind]
+
+    for order in state['orders']:
+        old = old_orders.get(order['id'])
+        for kind, label in (('deposit', '定金'), ('final', '尾款')):
+            rows = receipts(state, order['id'], kind)
+            before = receipts(previous, order['id'], kind)
+            if old and (old['customer'], old['style']) != (order['customer'], order['style']):
+                for row in rows:
+                    row['title'] = (order['customer'] + ' · ' + order['style'])[:200]
+            if old and old['note'] != order['note']:
+                automatic_note = '订单' + label + '自动登记'
+                previous_note = (automatic_note + (' ｜ ' + old['note'] if old['note'] else ''))[:2000]
+                for row in rows:
+                    if row.get('note') in (automatic_note, previous_note):
+                        row['note'] = (automatic_note + (' ｜ ' + order['note'] if order['note'] else ''))[:2000]
+            desired = ledger.cents(order[kind])
+            if old is None or desired != ledger.cents(old[kind]):
+                difference = desired - sum(ledger.cents(r['amount']) for r in rows)
+                if difference > 0:
+                    if rows:
+                        latest = max(rows, key=lambda r: r['date'])
+                        latest['amount'] = (ledger.cents(latest['amount']) + difference) / 100
+                    else:
+                        day = receipt_date or (order['date'] if old is None else today())
+                        date.fromisoformat(day)
+                        ledger.check(day >= order['date'], '收款日期不能早于下单日期。')
+                        state['transactions'].append({
+                            'id': str(uuid4()), 'date': day, 'type': 'income', 'kind': kind,
+                            'category': '收入-' + label,
+                            'title': (order['customer'] + ' · ' + order['style'])[:200],
+                            'amount': difference / 100, 'orderId': order['id'],
+                            'referenceOrderNo': order['no'],
+                            'note': ('订单' + label + '自动登记' + (' ｜ ' + order['note'] if order['note'] else ''))[:2000],
+                        })
+                elif difference < 0:
+                    reduction = -difference
+                    for row in sorted(rows, key=lambda r: r['date'], reverse=True):
+                        take = min(ledger.cents(row['amount']), reduction)
+                        row['amount'] = (ledger.cents(row['amount']) - take) / 100
+                        reduction -= take
+                        if not reduction:
+                            break
+                    state['transactions'] = [r for r in state['transactions'] if ledger.cents(r['amount']) > 0]
+            elif {r['id']: ledger.cents(r['amount']) for r in rows} != {r['id']: ledger.cents(r['amount']) for r in before}:
+                order[kind] = sum(ledger.cents(r['amount']) for r in rows) / 100
+        order['received'] = (ledger.cents(order['deposit']) + ledger.cents(order['final'])) / 100
+    return ledger.validate(state)
+
+
+def from_reference(source, previous, *, synchronize=True, receipt_date=None):
     source = deepcopy(source)
     # Accept portable backups exported by the previous local UI as well.
     if source.get('app') == 'stitch-ledger':
@@ -63,6 +125,7 @@ def from_reference(source, previous):
         identifier = row['id']
         ledger.check(isinstance(identifier, str) and re.fullmatch(r'[\w.\-]{1,100}', identifier), '订单编号无效。')
         ledger.check(isinstance(row['no'], str) and 0 < len(row['no']) <= 100, '请填写订单编号。')
+        ledger.check(row['no'] not in numbers, '订单编号重复，请换一个编号。')
         old = old_orders.get(identifier, {})
         phone = row.get('phone', old.get('referencePhone', old.get('legacyImport', {}).get('phone', '')))
         ledger.check(isinstance(phone, str) and len(phone) <= 100, '联系电话格式不正确。')
@@ -87,6 +150,8 @@ def from_reference(source, previous):
         state['orders'].append(order)
         numbers.setdefault(row['no'], order['id'])
     old_cash = {r['id']: r for r in previous['transactions']}
+    old_numbers = {o['id']: o.get('no', o['id']) for o in previous['orders']}
+    new_numbers = {o['id']: o['no'] for o in state['orders']}
     for row in source['cash']:
         ledger.check(isinstance(row, dict), '收支记录无效。')
         income, expense = ledger.cents(row.get('inc', 0)), ledger.cents(row.get('exp', 0))
@@ -99,6 +164,13 @@ def from_reference(source, previous):
             'title': row['desc'], 'amount': (income or expense) / 100,
             'orderId': numbers.get(number, ''), 'referenceOrderNo': number, 'note': row.get('note', ''),
         }
+        # Renaming an order must not disconnect its existing receipts. Explicitly
+        # changing the cash row's selected order still reassigns it normally.
+        old_row = old_cash.get(row['id'], {})
+        old_number = old_row.get('referenceOrderNo', old_numbers.get(old_row.get('orderId'), ''))
+        if number and number == old_number and old_row.get('orderId') in new_numbers:
+            saved['orderId'] = old_row['orderId']
+            saved['referenceOrderNo'] = new_numbers[saved['orderId']]
         if income:
             saved['kind'] = 'deposit' if saved['category'] == '收入-定金' else 'final'
         state['transactions'].append(saved)
@@ -111,4 +183,5 @@ def from_reference(source, previous):
         old = old_styles.get(style['name'], {})
         state['styles'].append({**old, **style, 'cost': old.get('cost', 0),
                                 'id': old.get('id') or str(uuid5(NAMESPACE_URL, 'handmade-bags/style/' + style['name']))})
-    return ledger.validate(state)
+    ledger.validate(state)
+    return sync_receipts(state, previous, receipt_date) if synchronize else state
