@@ -15,8 +15,9 @@ from . import ledger
 from .database import ConflictError, Database
 from .export import excel
 from .identity import instance_id
-from .images import MAX_UPLOAD, check_photos, embed_photos, restore_photos, store_image
+from .images import MAX_UPLOAD, check_photos, embed_photos, image_path, restore_photos, store_image
 from .legacy_import import normalize_backup
+from .reference_book import from_reference, to_reference
 from .models import ClearInput, OrderInput, ProgressInput, StyleInput, TransactionInput, today
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +71,37 @@ def create_app(data_dir: Path | None = None, images_dir: Path | None = None, fro
     @app.get('/api/ledger')
     def get_ledger():
         return result(database.read())
+
+    @app.get('/api/book')
+    def get_book():
+        return book_result(*database.read())
+
+    def book_result(state, revision):
+        photos = {url for order in state['orders'] for url in order['photos']}
+        return {'data': to_reference(state), 'revision': revision,
+                'imageSizes': {url: image_path(url, images_dir).stat().st_size for url in photos}}
+
+    @app.put('/api/book')
+    def save_book(body: dict, x_ledger_revision: int = Header()):
+        created = []
+        try:
+            state = from_reference(body, database.read()[0])
+            created = restore_photos(state, images_dir)
+            saved = mutate(lambda _: ledger.validate(state), x_ledger_revision, undo=True)
+            return book_result(saved['data'], saved['revision'])
+        except (KeyError, TypeError, AttributeError):
+            for path in created:
+                path.unlink(missing_ok=True)
+            raise ValueError('数据格式不正确，当前账本未改变。') from None
+        except Exception:
+            for path in created:
+                path.unlink(missing_ok=True)
+            raise
+
+    @app.get('/api/book/backup')
+    def book_backup():
+        state = embed_photos(deepcopy(database.read()[0]), images_dir)
+        return to_reference(state)
 
     @app.get('/api/orders')
     def orders(q: str = '', status: str = '', unpaid: bool = False):

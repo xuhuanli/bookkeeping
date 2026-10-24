@@ -49,6 +49,8 @@ def legacy_amounts(order):
 
 
 def recalc(state):
+    if state.get('accountingMode') == 'manual':
+        return state
     for order in state['orders']:
         rows = [t for t in state['transactions'] if t.get('orderId') == order['id'] and t['type'] == 'income']
         order['deposit'] = total([t for t in rows if t.get('kind') == 'deposit'])
@@ -59,6 +61,7 @@ def recalc(state):
 
 def validate(state):
     check(isinstance(state, dict) and state.get('version') == 2, '不支持的备份版本。')
+    manual = state.get('accountingMode') == 'manual'
     for key in ('orders', 'transactions', 'styles'):
         check(isinstance(state.get(key), list) and len(state[key]) <= 50000, '备份结构不完整或记录过多。')
         ids = [r.get('id') for r in state[key] if isinstance(r, dict)]
@@ -70,20 +73,20 @@ def validate(state):
         fields = {k: order[k] for k in OrderInput.model_fields if k in order}
         OrderInput.model_validate(fields)
         overpayment, undated_discount = legacy_amounts(order)
-        check(cents(balance(order)) >= -overpayment, '已收金额与优惠之和不能超过报价（旧版原有多收金额可以保留，不能增加）。')
+        check(manual or cents(balance(order)) >= -overpayment, '已收金额与优惠之和不能超过报价（旧版原有多收金额可以保留，不能增加）。')
         completed = order.get('completedDate', '')
         check(isinstance(completed, str), '订单完成日期无效。')
         if completed:
             date.fromisoformat(completed)
             check(completed >= order['date'], '完成日期不能早于下单日期。')
-        check(order['status'] != 'delivered' or completed or order.get('legacyImport', {}).get('completedDateUnknown'), '已完成订单缺少完成日期。')
+        check(manual or order['status'] != 'delivered' or completed or order.get('legacyImport', {}).get('completedDateUnknown'), '已完成订单缺少完成日期。')
         history = order.get('discountHistory', [])
         check(isinstance(history, list), '优惠历史无效。')
         for item in history:
             check(isinstance(item, dict) and isinstance(item.get('date'), str), '优惠历史无效。')
             date.fromisoformat(item['date'])
             check(item['date'] >= order['date'], '优惠登记日期不能早于下单日期。')
-        check(sum(cents(h['amount']) for h in history) + undated_discount == cents(order['discount']), '优惠历史与金额不一致。')
+        check(manual or sum(cents(h['amount']) for h in history) + undated_discount == cents(order['discount']), '优惠历史与金额不一致。')
     for row in state['transactions']:
         TransactionInput.model_validate({k: row[k] for k in TransactionInput.model_fields if k in row})
         check(row['category'] in CATEGORIES, '收支类型不正确。')
@@ -94,11 +97,11 @@ def validate(state):
             if row['type'] == 'income':
                 expected_kind = 'deposit' if row['category'] == '收入-定金' else 'final'
                 check(row.get('kind') == expected_kind, '收款类型与流水分类不一致。')
-                check(row['date'] >= order['date'], '收款日期不能早于下单日期。')
+                check(manual or row['date'] >= order['date'], '收款日期不能早于下单日期。')
     for order in state['orders']:
         rows = [t for t in state['transactions'] if t.get('orderId') == order['id'] and t['type'] == 'income']
-        check(cents(total(rows)) == cents(order['received']), '订单与关联收入流水不一致。')
-        check(cents(total([t for t in rows if t['kind'] == 'deposit'])) == cents(order['deposit']), '定金与流水不一致。')
+        check(manual or cents(total(rows)) == cents(order['received']), '订单与关联收入流水不一致。')
+        check(manual or cents(total([t for t in rows if t['kind'] == 'deposit'])) == cents(order['deposit']), '定金与流水不一致。')
         check(cents(order['deposit']) + cents(order['final']) == cents(order['received']), '定金、尾款和已收金额不一致。')
     return state
 
@@ -136,6 +139,14 @@ def save_order(state, model: OrderInput, old_id=None):
                 row['orderId'] = order['id']
                 if row['title'] == old['customer'] + ' · ' + old['style']:
                     row['title'] = order['customer'] + ' · ' + order['style']
+    if state.get('accountingMode') == 'manual':
+        order = {**(old or {}), **order}
+        order['received'] = (cents(order['deposit']) + cents(order['final'])) / 100
+        if old:
+            state['orders'][state['orders'].index(old)] = order
+        else:
+            state['orders'].insert(0, order)
+        return validate(state)
     for kind in ('deposit', 'final'):
         rows = [t for t in state['transactions'] if t.get('orderId') == order['id'] and t['type'] == 'income' and t['kind'] == kind]
         difference = cents(order[kind]) - cents(total(rows))
@@ -191,7 +202,8 @@ def remove(state, kind, identifier):
     check(any(r['id'] == identifier for r in state[key]), '这条记录不存在。')
     state[key] = [r for r in state[key] if r['id'] != identifier]
     if kind == 'order':
-        state['transactions'] = [t for t in state['transactions'] if t.get('orderId') != identifier or t['type'] == 'expense']
+        if state.get('accountingMode') != 'manual':
+            state['transactions'] = [t for t in state['transactions'] if t.get('orderId') != identifier or t['type'] == 'expense']
         for row in state['transactions']:
             if row.get('orderId') == identifier:
                 row['orderId'] = ''
@@ -199,6 +211,18 @@ def remove(state, kind, identifier):
 
 
 def summary(state, month=None):
+    if state.get('accountingMode') == 'manual':
+        rows = [t for t in state['transactions'] if not month or t['date'].startswith(month)]
+        orders = [o for o in state['orders'] if not month or o['date'].startswith(month)]
+        income = total([t for t in rows if t['type'] == 'income'])
+        expense = total([t for t in rows if t['type'] == 'expense'])
+        discount = sum(min(cents(o['discount']), max(0, cents(o['price']) - cents(o['received']))) for o in orders)
+        return {'month': month or '累计', 'income': income, 'expense': expense, 'net': (cents(income) - cents(expense)) / 100,
+                'purchase': total([t for t in rows if t['type'] == 'expense' and t['category'].startswith('采购-')]),
+                'shipping': total([t for t in rows if t['category'] == '每周合并发货运费']),
+                'count': len(orders), 'completed': sum(o['status'] == 'delivered' for o in orders),
+                'pending': sum(max(0, cents(balance(o))) for o in orders) / 100, 'discount': discount / 100,
+                'pendingEstimated': False, 'completedUndated': 0}
     end = month + '-31' if month else '9999-12-31'
     rows = [t for t in state['transactions'] if not month or t['date'].startswith(month)]
     income = total([t for t in rows if t['type'] == 'income'])

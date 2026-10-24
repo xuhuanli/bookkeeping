@@ -1,1 +1,16 @@
-{"name":"针线小账 · 手作工作室","short_name":"针线小账","start_url":"/","display":"standalone","background_color":"#f6f8f2","theme_color":"#49664f","icons":[{"src":"/assets/mark.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{
+  "name": "手作包包记账本",
+  "short_name": "包包记账本",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F8F5",
+  "theme_color": "#B7DFC8",
+  "icons": [
+    {
+      "src": "/assets/mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -49,6 +49,9 @@ class Database:
         state = empty()
         for table in ('orders', 'transactions', 'styles'):
             state[table] = [json.loads(row[0]) for row in connection.execute(f'SELECT payload FROM {table} ORDER BY rowid')]
+        extras = connection.execute("SELECT value FROM metadata WHERE key='snapshotExtras'").fetchone()
+        if extras:
+            state.update(json.loads(extras[0]))
         revision = int(connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0])
         return state, revision
 
@@ -65,6 +68,8 @@ class Database:
         connection.executemany('INSERT INTO orders VALUES (?,?,?,?,?)', [(o['id'], cents(o['price']), cents(o['discount']), cents(o['cost']), pack(o)) for o in state['orders']])
         connection.executemany('INSERT INTO transactions VALUES (?,?,?,?)', [(t['id'], t.get('orderId') or None, cents(t['amount']), pack(t)) for t in state['transactions']])
         connection.executemany('INSERT INTO styles VALUES (?,?,?)', [(p['id'], cents(p['price']) if p.get('price') is not None else None, pack(p)) for p in state['styles']])
+        extras = {k: state[k] for k in ('accountingMode', 'sequence') if k in state}
+        connection.execute("INSERT OR REPLACE INTO metadata VALUES ('snapshotExtras',?)", (pack(extras),))
 
     def mutate(self, operation, revision=None, undo=False):
         with self.connect() as connection:

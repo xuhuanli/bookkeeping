@@ -1,103 +1,103 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, reactive, ref, nextTick } from 'vue'
-import Icon from './components/Icon.vue'
-import Modal from './components/Modal.vue'
-import OrderForm from './components/OrderForm.vue'
-import TransactionForm from './components/TransactionForm.vue'
-import StyleManager from './components/StyleManager.vue'
-import OrderList from './components/OrderList.vue'
-import TransactionList from './components/TransactionList.vue'
-import { useLedger } from './composables/useLedger'
-import { today, money, total, balance, statuses, categories, dayLabel, download, copyText, orderText } from './utils'
-import { makeOrderImage } from './share'
-
-const {state,reports,hasUndo,busy,loading,error,load,mutate,upload}=useLedger()
-const pages={overview:'工作室概览',orders:'我的订单',ledger:'收支记录',products:'手作作品',customers:'顾客小本',reports:'月度汇总',studio:'我的工作室'}
-const page=ref(pages[location.hash.slice(1)]?location.hash.slice(1):'overview'),month=ref(today().slice(0,7)),orderFilter=ref('all'),query=ref(''),ledgerFilter=ref('all'),ledgerQuery=ref(''),ledgerCategory=ref('all')
-const nav=[['overview','grid'],['orders','bag'],['ledger','wallet'],['products','layers'],['customers','users'],['reports','chart']]
-const subtitles={overview:'每一份手作，每一笔小收获，都好好记住。',orders:'从收到预定，到寄出包包，每一单都照顾好。',ledger:'每次真实到账，每份材料采购，都有记录。',products:'常做的款式与单价，下次接单时轻轻一点。',customers:'记住顾客的喜好，让下一次手作多一点默契。',reports:'从第一笔记录开始，看看热爱的收获。',studio:'把手作照顾好，也把账本照顾好。'}
-const titles={overview:'把热爱，慢慢记下来。',orders:'我的手作订单',ledger:'一笔一笔，记得清楚。',products:'我的手作作品',customers:'顾客小本',reports:'看看，热爱长大的样子。',studio:'我的小小工作室。'}
-const allMonths=computed(()=>[...new Set([today().slice(0,7),month.value,...state.orders.map(o=>o.date.slice(0,7)),...state.transactions.map(t=>t.date.slice(0,7))])].sort().reverse())
-const monthlyTx=computed(()=>state.transactions.filter(t=>month.value==='all'||t.date.startsWith(month.value)))
-const income=computed(()=>total(monthlyTx.value.filter(t=>t.type==='income'))),expense=computed(()=>total(monthlyTx.value.filter(t=>t.type==='expense')))
-const pending=computed(()=>state.orders.filter(o=>balance(o)>0)),active=computed(()=>state.orders.filter(o=>o.status!=='delivered')),ready=computed(()=>state.orders.filter(o=>o.status==='ready'))
-const filteredOrders=computed(()=>state.orders.filter(o=>(page.value!=='overview'||o.status!=='delivered')&&(orderFilter.value==='all'||orderFilter.value==='unpaid'&&balance(o)>0||o.status===orderFilter.value)&&[o.customer,o.id,o.style].join(' ').toLowerCase().includes(query.value.toLowerCase())).sort((a,b)=>b.date.localeCompare(a.date)))
-const visibleOrders=computed(()=>page.value==='overview'?filteredOrders.value.slice(0,4):filteredOrders.value)
-const filteredTx=computed(()=>state.transactions.filter(t=>(month.value==='all'||t.date.startsWith(month.value))&&(ledgerFilter.value==='all'||t.type===ledgerFilter.value)&&(ledgerCategory.value==='all'||t.category===ledgerCategory.value)&&[t.title,t.orderId,t.note].join(' ').toLowerCase().includes(ledgerQuery.value.toLowerCase())).sort((a,b)=>b.date.localeCompare(a.date)))
-const recentTx=computed(()=>[...monthlyTx.value].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3))
-const customers=computed(()=>[...new Set(state.orders.map(o=>o.customer))].map(name=>{const orders=state.orders.filter(o=>o.customer===name);return {name,orders,received:total(orders,o=>o.received)}}))
-const summary=computed(()=>reports.months.find(m=>m.month===month.value)||{income:0,expense:0,net:0,count:0,completed:0,pending:0})
-const profit=computed(()=>total(state.orders.filter(o=>o.date.startsWith(month.value)),o=>(Math.round(o.price*100)-Math.round(o.discount*100)-Math.round(o.cost*100))/100))
-const expenseCategories=computed(()=>categories.filter(c=>!c.includes('收入')).map((name,i)=>({name,value:total(monthlyTx.value.filter(t=>t.category===name)),color:['#90a47c','#c2c9a7','#dfd9c0','#b6c7b8','#e8e6d7'][i]})))
-const donut=computed(()=>{let n=0;return expense.value?`conic-gradient(${expenseCategories.value.map(c=>{const start=n;n+=c.value/expense.value*100;return `${c.color} ${start}% ${n}%`}).join(',')})`:'#edf1e5'})
-const recentMonths=computed(()=>Array.from({length:6},(_,i)=>{const d=new Date(Number(month.value.slice(0,4)),Number(month.value.slice(5))-6+i,1);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;return {key,value:reports.months.find(m=>m.month===key)?.income||0}}))
-const barMax=computed(()=>Math.max(1,...recentMonths.value.map(m=>m.value)))
-const modal=reactive({type:'',id:'',title:'',subtitle:'',defaults:{},style:null}),modalKey=ref(0),formError=ref(''),confirmation=ref(''),toast=ref(''),photo=ref(''),photoDialog=ref(null),importFile=ref(null),importPreview=ref(null),share=ref(null),shareBusy=ref(false),manualCopy=ref('')
-let toastTimer
-const selectedOrder=computed(()=>state.orders.find(o=>o.id===modal.id)),selectedTransaction=computed(()=>state.transactions.find(t=>t.id===modal.id))
-const nextStatus=computed(()=>({booked:['making','开始制作'],making:['ready','标记待发货'],ready:['shipped','标记已发货'],shipped:['delivered','标记已完成']}[selectedOrder.value?.status]))
-function notify(text){toast.value=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.value='',4000)}
-function navigate(key){page.value=pages[key]?key:'overview';if(month.value==='all'&&page.value!=='ledger')month.value=today().slice(0,7);orderFilter.value='all';query.value='';history.replaceState(null,'','#'+page.value);window.scrollTo({top:0,behavior:'instant'})}
-function hashChanged(){navigate(location.hash.slice(1))}
-function open(type,title,subtitle='',extra={}){formError.value='';confirmation.value='';Object.assign(modal,{type,id:'',title,subtitle,defaults:{},style:null,path:'',method:'POST',message:'',typed:false,returnTo:'',...extra});modalKey.value++}
-function close(){if(busy.value)return;modal.type='';formError.value='';if(share.value){URL.revokeObjectURL(share.value.url);share.value=null}}
-function newOrder(style=null){open('order','新建手作订单','先记下顾客、包款和钱，其他细节随时补。',{style})}
-function editOrder(o){open('order','编辑这份手作','修改收款会同步调整流水，已有收款日期保留。',{id:o.id})}
-function viewOrder(o){open('detail','这一份，认真做的手作',`订单 #${o.id} · ${dayLabel(o.date)}下单`,{id:o.id})}
-function newTransaction(defaults={}){open('transaction','记一笔收支','真实收到、真实花掉的钱，都记在这里。',{defaults})}
-function editTransaction(t){open('transaction','编辑收支记录','关联收入的修改会同步更新订单。',{id:t.id})}
-function pay(o){newTransaction({type:'income',category:'收入-尾款',orderId:o.id,title:o.customer+' · '+o.style,amount:balance(o)})}
-async function saveOrder(payload){try{await mutate('/api/orders'+(modal.id?'/'+encodeURIComponent(modal.id):''),modal.id?'PUT':'POST',payload);month.value=payload.date.slice(0,7);close();notify('订单已保存，收款流水已同步。')}catch(e){formError.value=e.message}}
-async function saveTransaction(payload){try{await mutate('/api/transactions'+(modal.id?'/'+encodeURIComponent(modal.id):''),modal.id?'PUT':'POST',payload);month.value=payload.date.slice(0,7);close();notify('收支已保存，关联订单已同步。')}catch(e){formError.value=e.message}}
-async function saveStyle({id,payload,done}){try{await mutate('/api/styles'+(id?'/'+encodeURIComponent(id):''),id?'PUT':'POST',payload);done();notify('常用款式已保存。')}catch(e){formError.value=e.message}}
-async function progress(){try{await mutate('/api/orders/'+encodeURIComponent(modal.id)+'/status','PATCH',{status:nextStatus.value[0]});notify('制作进度已更新。')}catch(e){formError.value=e.message}}
-function confirmDelete(kind,item){const path={order:'orders',transaction:'transactions',style:'styles'}[kind];const message=kind==='order'?`删除 ${item.customer} 的订单 ${item.id}，及其关联收入流水。采购支出会保留并取消关联。`:kind==='transaction'?'删除这笔流水。如果关联订单，已收金额会同步减少，待收尾款会重新计算。':'从常用款式中移除，已有订单的款式和金额会保留。';open('confirm','确认删除','删除后可在工作室恢复上一次操作。',{path:'/api/'+path+'/'+encodeURIComponent(item.id),method:'DELETE',message,returnTo:kind==='style'?'styles':''})}
-function confirmClear(){open('confirm','清空所有数据','请先留一份完整备份，确认后才会清空。',{path:'/api/clear',method:'POST',message:'将清空本机的订单、照片关联、收支流水和常用款式。操作前的账本可以恢复。',typed:true})}
-async function executeConfirmation(){try{if(modal.typed&&confirmation.value!=='清空')throw new Error('请输入「清空」确认。');await mutate(modal.path,modal.method,modal.path==='/api/clear'?{confirmation:confirmation.value}:modal.path==='/api/restore'?importFile.value:undefined);const returnTo=modal.returnTo;close();if(returnTo==='styles')open('styles','管理常用款式','在下单时可多选款式，报价自动相加。');notify('操作已完成，可在工作室恢复上一次操作。')}catch(e){formError.value=e.message}}
-function exportExcel(){download('/api/export.xlsx','针线小账-'+today()+'.xlsx')}
-function backup(){download('/api/backup','针线小账-完整备份-'+today()+'.json')}
-function restore(){importFile.value=null;importPreview.value=null;open('restore','恢复备份','选择针线小账或手作包包记账的 JSON 备份，先预览再恢复。')}
-async function readBackup(event){formError.value='';importFile.value=null;importPreview.value=null;try{const file=event.target.files[0];if(!file)return;if(file.size>40*1024*1024)throw new Error('备份文件不能超过 40 MB。');const raw=JSON.parse(await file.text()),data=raw.data||raw,legacy=data.version===undefined&&Array.isArray(data.cash),transactions=legacy?data.cash:data.transactions;if(raw.app&&raw.app!=='stitch-ledger'||!legacy&&data.version!==2||!Array.isArray(data.orders)||!Array.isArray(transactions)||!Array.isArray(data.styles))throw new Error('请选择针线小账或手作包包记账的 JSON 备份。');importFile.value=raw;importPreview.value={orders:data.orders.length,transactions:transactions.length,styles:data.styles.length,photos:data.orders.reduce((n,o)=>n+((legacy?o.ph:o.photos)?.length||0),0)}}catch(e){formError.value=e instanceof SyntaxError?'文件不是有效的 JSON 备份。':e.message}}
-function confirmRestore(){open('confirm','确认恢复备份','现有账本会被替换，可以恢复操作前的数据。',{path:'/api/restore',method:'POST',message:`用备份中的 ${importPreview.value.orders} 笔订单、${importPreview.value.transactions} 笔流水和 ${importPreview.value.photos} 张照片替换当前账本。`})}
-function undo(){open('confirm','恢复上一次操作','将恢复最近一次删除、清空或导入之前的账本。',{path:'/api/undo',method:'POST',message:'恢复会替换当前账本。建议先下载完整备份，保留现在的记录。'})}
-async function copy(value){try{if(await copyText(value))notify('已复制，可以粘贴到微信。');else {manualCopy.value=value;open('copy','复制文字','长按下面的文字，全选后复制。')}}catch{manualCopy.value=value;open('copy','复制文字','长按下面的文字，全选后复制。')}}
-async function viewPhoto(url){photo.value=url;await nextTick();photoDialog.value.showModal()}
-async function shareOrder(o){shareBusy.value=true;try{const image=await makeOrderImage(o);open('share','订单截图','长按图片可保存，也可下载图片或复制文字。',{id:o.id});if(share.value)URL.revokeObjectURL(share.value.url);share.value=image}catch(e){notify(e.message||'图片生成失败，可以先复制文字版。')}finally{shareBusy.value=false}}
-async function systemShare(){const file=new File([share.value.blob],share.value.name,{type:'image/png'});try{if(navigator.canShare?.({files:[file]}))await navigator.share({files:[file],title:'手作订单'});else {download(share.value.url,share.value.name);notify('图片已下载，也可长按图片保存。')}}catch(e){if(e.name!=='AbortError')notify('可以长按图片保存，或使用下载图片。')}}
-function studioAction(action){if(action==='styles')open('styles','管理常用款式','在下单时可多选款式，报价自动相加。');else if(action==='export')exportExcel();else if(action==='backup')backup();else if(action==='restore')restore();else if(action==='undo')undo();else if(action==='clear')confirmClear();else if(action==='help')open('help','给账本的一点小指南','认真手作，也可以轻松记账。');else navigate(action)}
-const studioLinks=[['products','layers','手作作品','常用款式、单价与快速接单'],['customers','users','顾客小本','顾客喜好与定制细节'],['reports','chart','月度汇总','累计收支与每月收获'],['styles','tag','管理常用款式','新增、修改款式和单价'],['export','download','导出 Excel','订单、收支、月度汇总和款式'],['backup','wallet','备份数据','完整 JSON 备份，包含成品照片'],['restore','layers','恢复备份','先预览内容，再确认导入'],['undo','clock','恢复上一次操作','找回删除、清空或导入前的账本'],['help','help','使用小指南','记账、照片分享和手机使用'],['clear','close','清空所有数据','清空订单、流水和常用款式']]
-function showCustomer(c){navigate('orders');query.value=c.name}
-onMounted(()=>{load();window.addEventListener('hashchange',hashChanged)})
-onBeforeUnmount(()=>{window.removeEventListener('hashchange',hashChanged);clearTimeout(toastTimer);if(share.value)URL.revokeObjectURL(share.value.url)})
+import { onMounted, onBeforeUnmount } from 'vue'
+import { startReferenceApp } from './reference-app'
+let cleanup
+onMounted(() => { cleanup = startReferenceApp() })
+onBeforeUnmount(() => cleanup?.())
 </script>
 <template>
-<div class="app-shell"><aside class="sidebar"><a class="brand" href="#overview"><span class="brand-mark"><Icon name="bag" /></span><span><strong>针线小账<span class="brand-dot">.</span></strong><small>记录手作的每一份美好</small></span></a><div class="workspace-label">我的工作室 <span>PERSONAL STUDIO</span></div><nav class="navigation" aria-label="主要导航"><button v-for="[key,i] in nav" :key="key" class="nav-item" :class="{active:page===key}" @click="navigate(key)"><Icon :name="i" /><span>{{pages[key]}}</span><b v-if="key==='orders'">{{active.length}}</b></button></nav><div class="sidebar-bottom"><div class="studio-note"><span class="note-spark">✳</span><p>小小的手作，<br>也有认真经营的光。</p><small>ONE STITCH AT A TIME</small></div><button class="help-link" @click="studioAction('help')"><Icon name="help" />使用小指南<Icon name="arrow-up-right" /></button><button class="profile" @click="navigate('studio')"><span class="avatar">手</span><span><strong>我的手作工作室</strong><small>电脑保存 · 手机记账</small></span><Icon name="chevrons" /></button></div></aside>
-<div class="content-shell"><header class="topbar"><div class="breadcrumb"><a class="mobile-brand" href="#overview"><img src="/assets/mark.svg" alt=""><span>针线小账</span></a><span class="desktop-crumb">我的工作室</span><i class="desktop-crumb">/</i><strong class="desktop-crumb">{{pages[page]}}</strong></div><div class="topbar-tools"><span class="demo-badge"><i></i>电脑本地保存</span><button class="icon-button" aria-label="刷新账本" :disabled="loading||busy" @click="load"><Icon name="chevrons" /></button><button class="mini-avatar" aria-label="我的工作室" @click="navigate('studio')">手</button></div></header>
-<main id="main" tabindex="-1"><div v-if="loading" class="empty-state">正在打开你的手作账本…</div><div v-else-if="error" class="storage-error" role="alert"><p>{{error}}</p><button class="btn btn-primary" @click="load">重新连接</button></div><div v-else class="fade-in"><section class="page-heading" :class="'page-heading-'+page"><div><div class="eyebrow">YOUR LITTLE HANDMADE STUDIO</div><h1>{{titles[page]}}</h1><p class="subtitle">{{subtitles[page]}}</p></div><div class="heading-right"><button v-if="['overview','orders'].includes(page)" class="btn heading-expense" @click="newTransaction()"><Icon name="plus" />记一笔收支</button><button v-if="['overview','orders'].includes(page)" class="btn btn-primary heading-order" @click="newOrder()"><Icon name="plus" />新建订单</button><button v-if="page==='ledger'" class="btn btn-primary heading-expense" @click="newTransaction()"><Icon name="plus" />记一笔收支</button><button v-if="!['overview','orders','ledger'].includes(page)" class="btn" @click="exportExcel"><Icon name="download" />导出 Excel</button></div></section>
-<div v-if="['overview','ledger','reports'].includes(page)" class="date-bar"><select class="date-select" aria-label="账目月份" v-model="month"><option v-if="page==='ledger'" value="all">所有月份</option><option v-for="m in allMonths.filter(m=>m!=='all')" :key="m" :value="m">{{m.slice(0,4)}}年 {{Number(m.slice(5))}}月</option></select><span class="date-note"><Icon name="leaf" />今天也要好好手作</span></div>
-<div v-if="page==='overview'" class="stats-grid"><article v-for="[label,value,i,foot] in [['本月已收款',income,'wallet','定金、尾款，按实际到账记录'],['待收尾款',total(pending,balance),'clock',pending.length+' 笔订单尚有款项待收'],['本月实际支出',expense,'layers','布料、辅料、工具与发货运费'],['订单预估毛利',profit,'leaf','本月报价 − 优惠 − 预估直接成本']]" :key="label" class="stat-card" :class="{primary:i==='wallet'}"><div class="stat-head">{{label}}<span class="stat-icon"><Icon :name="i" /></span></div><div class="stat-value"><span>¥</span>{{money(value)}}</div><div class="stat-foot">{{foot}}</div></article></div>
-<div v-if="page==='orders'" class="compact-stats"><div v-for="[label,value] in [['订单总数',state.orders.length+' 单'],['累计已收','¥'+money(total(state.orders,o=>o.received))],['待收尾款','¥'+money(total(pending,balance))],['优惠合计','¥'+money(total(state.orders,o=>o.discount))]]" :key="label"><small>{{label}}</small><strong>{{value}}</strong></div></div>
-<div v-if="['overview','orders'].includes(page)" :class="page==='overview'?'dashboard-grid':''"><div :class="{'dashboard-left':page==='overview'}"><section class="panel orders-panel" :class="page==='overview'?'overview-orders':'wide-panel'"><div class="panel-heading"><h2 class="panel-title">{{page==='overview'?'正在进行的手作':'所有手作订单'}} <span class="tiny-count">{{page==='overview'?active.length:state.orders.length}}</span></h2><button class="btn btn-quiet" @click="page==='overview'?navigate('orders'):exportExcel()">{{page==='overview'?'全部订单':'导出 Excel'}}<Icon name="arrow" /></button></div><div class="order-tools"><div class="tabs" role="group" aria-label="筛选订单"><button v-for="[key,label] in [['all','全部'],['unpaid','待收尾款'],...Object.entries(statuses)]" :key="key" class="tab" :class="{active:orderFilter===key}" :aria-pressed="orderFilter===key" @click="orderFilter=key">{{label}}</button></div><label class="table-search"><Icon name="search" /><input id="order-search" aria-label="搜索订单、顾客或包款" v-model="query" placeholder="搜索顾客、包款或订单"></label></div><OrderList :orders="visibleOrders" @view="viewOrder" @pay="pay" @edit="editOrder" @share="shareOrder" /><div class="table-footer"><span>共 {{filteredOrders.length}} 笔{{page==='overview'?'进行中的':''}}订单</span><span>一针一线，慢慢来</span></div></section><section v-if="page==='overview'" class="panel lower-panel"><div class="lower-heading"><h2>最近的收支</h2><button class="btn btn-quiet" @click="navigate('ledger')">查看全部 <Icon name="arrow" /></button></div><TransactionList :rows="recentTx" @edit="editTransaction" /></section></div><aside v-if="page==='overview'" class="right-column"><section class="panel todo-panel"><div class="panel-heading"><h2 class="panel-title"><Icon name="spark" />手作待办</h2><span class="tiny-count">{{pending.length+ready.length}}</span></div><div class="todo-item"><span class="todo-icon"><Icon name="wallet" /></span><div><strong>{{pending.length}} 笔尾款，等你收好</strong><p>合计 <span class="todo-value">¥{{money(total(pending,balance))}}</span></p></div></div><div class="todo-item"><span class="todo-icon"><Icon name="package" /></span><div><strong>{{ready.length}} 份手作，准备出发</strong><p>{{ready.length?ready[0].customer+'的包包做好啦':'给完成的作品一个漂亮包装'}}</p></div></div><button class="btn todo-action" @click="navigate('orders');orderFilter='unpaid'">查看待收尾款 <Icon name="arrow" /></button></section><section class="panel cost-panel"><div class="panel-heading"><h2 class="panel-title">每一笔，小小投入</h2><span class="cost-caption">本月支出</span></div><div class="cost-body"><div class="donut-wrap"><div class="donut" :style="{background:donut}"><strong>¥{{money(expense)}}</strong><small>认真花的每一分钱</small></div></div><div class="legend"><div v-for="c in expenseCategories.filter(c=>c.value)" :key="c.name" class="legend-line"><span class="legend-dot" :style="{background:c.color}"></span>{{c.name}}<strong>¥{{money(c.value)}}</strong></div><p v-if="!expense" class="field-hint">记下采购后<br>这里会自动分类。</p></div></div></section></aside></div>
-<template v-if="page==='ledger'"><div class="compact-stats"><div v-for="[label,value] in [['所选月份收入',income],['所选月份支出',expense],['累计采购',reports.total.purchase],['累计运费',reports.total.shipping]]" :key="label"><small>{{month==='all'?label.replace('所选月份','累计'):label}}</small><strong>¥{{money(value)}}</strong></div></div><section class="panel"><div class="panel-heading"><h2 class="panel-title">收支流水 <span class="tiny-count">{{filteredTx.length}} 笔</span></h2><button class="btn btn-quiet" @click="exportExcel">导出 Excel</button></div><div class="order-tools ledger-tools"><div class="tabs"><button v-for="[key,label] in [['all','全部'],['income','收入'],['expense','支出']]" :key="key" class="tab" :class="{active:ledgerFilter===key}" @click="ledgerFilter=key">{{label}}</button></div><select aria-label="收支分类" v-model="ledgerCategory"><option value="all">所有分类</option><option v-for="c in categories" :key="c">{{c}}</option></select><input aria-label="搜索流水" v-model="ledgerQuery" placeholder="搜索事项或订单编号"></div><div class="full-ledger"><TransactionList :rows="filteredTx" @edit="editTransaction" /></div></section><p class="section-intro"><Icon name="info" />收入填实际到账金额，运费可以每周合并一笔。点任意流水可修改或删除，关联订单会同步更新。</p></template>
-<template v-if="page==='products'"><div class="section-caption"><span>共 {{state.styles.length}} 个常用款式</span><button class="btn btn-primary" @click="studioAction('styles')">管理常用款式</button></div><div class="product-grid"><article v-for="(p,i) in state.styles" :key="p.id" class="product-card"><div class="product-image" :class="'bag-'+(p.artId??i%4)" role="img" aria-label="包包示意图"><span class="product-chip">常用款式 · 示意图</span></div><div class="product-body"><h2>{{p.name}}</h2><div class="product-price"><span>参考售价</span><strong>{{p.price===null?'未设单价':'¥'+money(p.price)}}</strong></div><p class="product-cost">预估成本 ¥{{money(p.cost)}}</p><button class="btn" @click="newOrder(p)"><Icon name="plus" />为这个包款接一单</button></div></article></div><div v-if="!state.styles.length" class="empty-state">把常做的包款记下来，下次接单更轻松。<br><button class="btn btn-primary" @click="studioAction('styles')">添加常用款式</button></div></template>
-<div v-if="page==='customers'" class="customer-grid"><article v-for="c in customers" :key="c.name" class="customer-card"><div class="customer-top"><span class="customer-avatar">{{c.name[0]}}</span><div><h2>{{c.name}}</h2><small>{{c.orders[0].channel||'手作朋友'}}{{c.orders.length>1?' · 再次光顾':''}}</small></div></div><div class="customer-numbers"><div><small>手作订单</small><strong>{{c.orders.length}} <small>单</small></strong></div><div><small>累计已收</small><strong>¥{{money(c.received)}}</strong></div></div><p class="customer-note">{{c.orders[0].note||'每一份喜欢，都值得被记住。'}}</p><button class="btn btn-quiet" @click="showCustomer(c)">看看 TA 的手作 <Icon name="arrow" /></button></article><div v-if="!customers.length" class="empty-state">订单记下后，顾客小本会自动整理。</div></div>
-<template v-if="page==='reports'"><section class="lifetime-panel"><div><span class="eyebrow">YOUR HANDMADE JOURNEY</span><h2>全程总账</h2><p>累计净收益 <small>（实际收入 − 实际支出）</small></p><strong class="lifetime-value" :class="{expense:reports.total.net<0}">¥{{money(reports.total.net)}}</strong></div><div class="lifetime-details"><div v-for="[label,key] in [['累计收入','income'],['累计支出','expense'],['采购成本','purchase'],['发货运费','shipping']]" :key="key"><small>{{label}}</small><strong>¥{{money(reports.total[key])}}</strong></div></div></section><div class="report-grid"><section class="panel"><div class="panel-heading"><h2 class="panel-title">近六个月收款</h2><span class="cost-caption">实际到账</span></div><div class="bar-chart"><div v-for="m in recentMonths" :key="m.key" class="bar-item"><strong>¥{{money(m.value)}}</strong><div class="bar" :style="{height:Math.max(2,m.value/barMax*140)+'px'}"></div><small>{{Number(m.key.slice(5))}}月</small></div></div></section><section class="panel"><div class="panel-heading"><h2 class="panel-title">{{month}} 的手作小结</h2></div><div class="report-summary"><div v-for="[label,value] in [['新增订单',summary.count+' 单'],['完成订单',summary.completed+' 单'],['月末待收','¥'+money(summary.pending)],['本月净收益','¥'+money(summary.net)]]" :key="label" class="summary-row">{{label}}<strong>{{value}}</strong></div></div></section></div><section class="monthly-history"><div class="section-caption"><h2>按月统计</h2><button class="btn" @click="exportExcel">导出 Excel</button></div><article v-for="m in reports.months" :key="m.month" class="month-card panel"><div class="month-card-title"><h3>{{m.month.slice(0,4)}}年 {{Number(m.month.slice(5))}}月</h3><span :class="m.net<0?'expense':'income'">净收益 ¥{{money(m.net)}}</span></div><div class="month-metrics"><div v-for="[label,key] in [['收入','income'],['支出','expense'],['采购','purchase'],['运费','shipping']]" :key="key"><small>{{label}}</small><strong>¥{{money(m[key])}}</strong></div></div><p>新增 {{m.count}} 单 · 完成 {{m.completed}} 单 · 月末待收 ¥{{money(m.pending)}}</p></article><div v-if="!reports.months.length" class="empty-state">记下第一笔后，这里会自动统计。</div></section><p v-if="reports.total.completedUndated" class="form-note">旧版备份有 {{reports.total.completedUndated}} 笔已完成订单未记录完成日期，已保留完成状态，未计入某个月的完成数量。</p><p v-if="reports.months.some(m=>m.pendingEstimated)" class="form-note">旧版优惠没有登记日期，历史月末待收使用现有优惠金额估算；实际收支金额与日期保持原样。</p><p class="form-note">净收益按实际收支计算，预估订单成本不重复扣除。月末待收按订单、当时实际到账金额和优惠日期计算；修改订单报价会影响历史待收。</p></template>
-<template v-if="page==='studio'"><section class="studio-profile panel"><span class="avatar">手</span><div><h2>我的手作工作室</h2><p>电脑保存，手机记录。让热爱慢慢长大。</p></div><Icon name="leaf" /></section><div class="studio-links"><button v-for="[action,i,title,sub] in studioLinks" :key="action" :disabled="action==='undo'&&!hasUndo" @click="studioAction(action)"><span class="studio-link-icon"><Icon :name="i" /></span><span><strong>{{title}}</strong><small>{{sub}}</small></span><Icon name="arrow" /></button></div><p class="studio-demo-note"><Icon name="info" />账目保存在电脑的 SQLite 数据库，图片保存在 images 目录。手机换浏览器也能查看同一份账本。定期下载完整备份，方便搬到另一台电脑。</p></template>
-</div></main><footer class="page-footer"><span>针线小账 <i>·</i> 为热爱，留一份记录</span><span>电脑本地保存 · 局域网访问</span></footer></div></div>
-<nav class="bottom-nav" aria-label="手机主要导航"><button v-for="[key,i,label] in [['overview','grid','首页'],['orders','bag','订单'],['quick','plus','记一笔'],['ledger','wallet','收支'],['studio','users','工作室']]" :key="key" :class="{active:key===page||key==='studio'&&['products','customers','reports'].includes(page),'quick-record':key==='quick'}" :aria-current="key===page?'page':undefined" @click="key==='quick'?open('quick','今天想记点什么？','一笔小记录，让手作更轻松。'):navigate(key)"><span :class="{'quick-plus':key==='quick'}"><Icon :name="i" /></span><span>{{label}}</span></button></nav>
-<Modal :content-key="modalKey" :open="!!modal.type" :title="modal.title" :subtitle="modal.subtitle" :busy="busy" @close="close">
-<OrderForm v-if="modal.type==='order'" :key="modalKey" :order="selectedOrder" :initial-style="modal.style" :styles="state.styles" :upload="upload" :busy="busy" :error="formError" @save="saveOrder" @cancel="close" @view-photo="viewPhoto" />
-<TransactionForm v-else-if="modal.type==='transaction'" :key="modalKey" :transaction="selectedTransaction" :defaults="modal.defaults" :orders="state.orders" :busy="busy" :error="formError" @save="saveTransaction" @cancel="close" @delete="confirmDelete('transaction',selectedTransaction)" />
-<StyleManager v-else-if="modal.type==='styles'" :key="modalKey" :styles="state.styles" :busy="busy" :error="formError" @save="saveStyle" @delete="p=>confirmDelete('style',p)" @close="close" />
-<template v-else-if="modal.type==='detail' && selectedOrder"><div class="dialog-body"><div class="detail-product"><img v-if="selectedOrder.photos.length" class="bag-thumb detail-bag" :src="selectedOrder.photos[0]" alt="成品照片"><span v-else class="bag-thumb detail-bag" :class="'bag-'+(selectedOrder.product??0)"></span><div><h3>{{selectedOrder.style}}</h3><p>{{selectedOrder.customer}} · {{selectedOrder.channel}}<br><span class="status" :class="'status-'+selectedOrder.status">{{statuses[selectedOrder.status]}}</span></p></div></div><div class="money-summary"><div><small>订单报价</small><strong>¥{{money(selectedOrder.price)}}</strong></div><div><small>已经收到</small><strong>¥{{money(selectedOrder.received)}}</strong></div><div class="balance-warn"><small>待收尾款</small><strong>¥{{money(balance(selectedOrder))}}</strong></div></div><dl class="detail-grid"><div v-for="[label,value] in [['已收定金','¥'+money(selectedOrder.deposit)],['已收尾款','¥'+money(selectedOrder.final)],['抹零 / 优惠','¥'+money(selectedOrder.discount)],['预计交付',selectedOrder.due||'还未约定'],['预估直接成本','¥'+money(selectedOrder.cost)],['预估订单毛利','¥'+money(selectedOrder.price-selectedOrder.discount-selectedOrder.cost)]]" :key="label"><dt>{{label}}</dt><dd>{{value}}</dd></div></dl><div class="detail-block"><h3>收货信息 <button v-if="selectedOrder.address" class="btn" @click="copy(selectedOrder.address)">复制</button></h3><p>{{selectedOrder.address||'暂未填写'}}</p></div><div class="detail-block"><h3>快递单号 <button v-if="selectedOrder.tracking" class="btn" @click="copy(selectedOrder.tracking)">复制</button></h3><p>{{selectedOrder.tracking||'暂未填写'}}</p></div><div class="photo-grid"><button v-for="(url,i) in selectedOrder.photos" :key="url" class="photo-tile" :aria-label="'放大成品照片 '+(i+1)" @click="viewPhoto(url)"><img :src="url" :alt="'成品照片 '+(i+1)"></button></div><p class="form-note preserve-lines">{{selectedOrder.note||'还没有备注。'}}</p><div class="detail-actions"><button class="btn" :disabled="shareBusy" @click="shareOrder(selectedOrder)">{{shareBusy?'生成中…':'生成订单截图'}}</button><button class="btn" @click="copy(orderText(selectedOrder))">复制文字版</button><button v-if="nextStatus" class="btn" :disabled="busy" @click="progress">{{nextStatus[1]}}</button><button class="btn danger-text" @click="confirmDelete('order',selectedOrder)">删除订单</button></div><p v-if="formError" class="inline-error" role="alert">{{formError}}</p></div><div class="dialog-footer"><button class="btn" @click="editOrder(selectedOrder)">编辑订单</button><button class="btn btn-primary" @click="balance(selectedOrder)>0?pay(selectedOrder):close()">{{balance(selectedOrder)>0?'记录收款':'收好了'}}</button></div></template>
-<div v-else-if="modal.type==='quick'" class="dialog-body quick-choices"><button @click="newOrder()"><span class="choice-icon"><Icon name="bag" /></span><span><strong>收到一份预定</strong><small>记下顾客、包款和定金</small></span><Icon name="arrow" /></button><button @click="open('choose-payment','给哪一份手作记收款？','选一笔订单，记下刚收到的款项。')"><span class="choice-icon"><Icon name="wallet" /></span><span><strong>收到一笔款项</strong><small>给已有订单记定金或尾款</small></span><Icon name="arrow" /></button><button @click="newTransaction()"><span class="choice-icon"><Icon name="layers" /></span><span><strong>花了一笔小钱</strong><small>材料、辅料、工具与发货运费</small></span><Icon name="arrow" /></button></div>
-<div v-else-if="modal.type==='choose-payment'" class="dialog-body payment-choices"><button v-for="o in pending" :key="o.id" @click="pay(o)"><span><strong>{{o.customer}}</strong><small>{{o.style}} · {{o.id}}</small></span><span class="balance-label"><small>待收</small><strong>¥{{money(balance(o))}}</strong></span></button><div v-if="!pending.length" class="empty-state">款项都收齐了，真好。<br>新的喜欢，也会慢慢到来。</div></div>
-<form v-else-if="modal.type==='confirm'" id="confirm-form" @submit.prevent="executeConfirmation"><div class="dialog-body"><p class="form-note preserve-lines">{{modal.message}}</p><label v-if="modal.typed" class="field">输入「清空」确认<input name="confirmation" v-model="confirmation" pattern="清空" placeholder="清空" autocomplete="off" required></label><p class="field-hint">操作前的账本可以在「工作室 → 恢复上一次操作」中找回。</p><button class="btn" type="button" @click="backup">先备份当前账本</button><p v-if="formError" class="inline-error" role="alert">{{formError}}</p></div><div class="dialog-footer"><button class="btn" type="button" :disabled="busy" @click="close">取消</button><button class="btn btn-primary" type="submit" :disabled="busy">{{busy?'正在处理…':'确认操作'}}</button></div></form>
-<div v-else-if="modal.type==='restore'" class="dialog-body"><label class="photo-upload"><Icon name="plus" />选择备份文件<input id="restore-file" type="file" accept="application/json,.json" @change="readBackup"></label><div v-if="importPreview" class="import-preview"><h3>备份已读取</h3><p>{{importPreview.orders}} 笔订单 · {{importPreview.transactions}} 笔流水</p><p>{{importPreview.styles}} 个款式 · {{importPreview.photos}} 张照片</p><button class="btn btn-primary" @click="confirmRestore">使用这份备份</button></div><p v-if="formError" class="inline-error" role="alert">{{formError}}</p><p class="form-note">恢复会替换现有账本。JSON 完整备份包含照片；Excel 用于查看，不能用于恢复。</p><button class="btn" @click="backup">先备份当前账本</button></div>
-<template v-else-if="modal.type==='share' && share"><div class="dialog-body share-preview"><img :src="share.url" alt="手作订单确认截图"><p class="field-hint">长按图片可保存，也可下载图片后发送。</p></div><div class="dialog-footer share-footer"><button class="btn" @click="copy(orderText(selectedOrder))">复制文字版</button><button class="btn" @click="systemShare">保存 / 分享</button><button class="btn btn-primary" @click="download(share.url,share.name)">下载图片</button></div></template>
-<div v-else-if="modal.type==='copy'" class="dialog-body"><textarea class="manual-copy" readonly :value="manualCopy" aria-label="待复制文字" @focus="$event.target.select()"></textarea></div>
-<template v-else-if="modal.type==='help'"><div class="dialog-body"><section class="help-section"><h3>① 先记订单，再补细节</h3><p>款式可手动填写，或多选常用款式自动合价。定金、尾款只填实际到账的钱，优惠填写抹掉的部分。地址、运单、交付时间与照片可以稍后补。</p></section><section class="help-section"><h3>② 收款自动同步，不重复记</h3><p>订单收款会自动生成收入流水，编辑或删除流水也会更新订单。修改订单中的累计收款，增加的部分计入所选收款日期，减少的部分从最近收款中扣减。</p></section><section class="help-section"><h3>③ 采购和运费，记实际花费</h3><p>布料、辅料和工具计入采购成本。运费可每周合并，注明周次和包裹数量。退款或记错金额，可修改原收入并注明原因。</p></section><section class="help-section"><h3>④ 把成品发给顾客确认</h3><p>订单可上传最多 6 张照片。点「生成订单截图」，下载或长按保存后发给顾客；也可复制文字版。照片保存在电脑的 images 目录。</p></section><section class="help-section"><h3>⑤ 留一份完整备份</h3><p>JSON 备份包含订单、流水、款式和照片，可以在另一台电脑恢复。Excel 方便查看统计。清空或删除后，可恢复最近一次操作前的账本。</p></section><section class="help-section"><h3>⑥ 手机打开账本</h3><p>电脑启动服务，手机连同一 Wi-Fi，打开电脑的局域网地址。iPhone 可在 Safari 分享菜单「添加到主屏幕」；安卓可在浏览器菜单添加桌面入口。使用时电脑需要保持开机。</p></section></div><div class="dialog-footer"><button class="btn btn-primary" @click="close">开始记录</button></div></template>
-</Modal>
-<dialog ref="photoDialog" class="photo-viewer" @cancel="photo=''" @click.self="photoDialog.close()"><button class="viewer-close" aria-label="关闭照片" @click="photoDialog.close()">×</button><img v-if="photo" :src="photo" alt="放大的成品照片"></dialog>
-<div class="toast" :class="{show:toast}" role="status" aria-live="polite">{{toast}}</div>
+<div class="topbar">
+  <h1>🧵 手作包包记账本</h1>
+  <div class="tabs">
+    <button class="tab on" data-tab="orders">📦 订单台账</button>
+    <button class="tab" data-tab="cash">💰 收支明细</button>
+    <button class="tab" data-tab="summary">📊 月度汇总</button>
+  </div>
+</div>
+<div class="panel on" id="panel-orders">
+  <div class="kpis" id="orderKpis">
+    <div class="kpi"><div class="lab">订单总数</div><div class="val">0</div></div>
+    <div class="kpi"><div class="lab">待收尾款合计</div><div class="val exp hl">¥0.00</div></div>
+    <div class="kpi"><div class="lab">已收金额合计</div><div class="val inc">¥0.00</div></div>
+    <div class="kpi"><div class="lab">抹零/优惠合计</div><div class="val" style="color:#C08A2E">¥0.00</div></div></div>
+  <div class="searchwrap">
+    <span class="ico">🔍</span>
+    <input type="search" id="orderSearch" placeholder="搜客人名字 / 单号 / 电话 / 款式" autocomplete="off" enterkeyhint="search">
+    <button class="clr" id="orderSearchClr" type="button" aria-label="清空">✕</button>
+  </div>
+  <div class="searchhint" id="orderSearchHint"></div>
+  <div class="card">
+    <div class="card-hd hd-pink"><span>订单列表</span><span id="orderCount" style="font-weight:400;font-size:12px;color:#7A8B82">共 0 条</span></div>
+    <div id="orderList"><div class="empty"><span class="big">📦</span>还没有订单<br>点下方「+ 记一笔订单」开始记录<br><span style="font-size:11.5px">数据会自动保存在本机</span></div></div>
+  </div>
+  <div class="notes">
+    <p class="nt">📝 订单台账怎么用</p>
+    <p>1. 客户下单就点底部「+ 记一笔订单」，先填日期、订单编号、客户、款式、报价。</p>
+    <p>2. 收到钱才更新「已收定金」「已收尾款」——只填<b>实际到账</b>的金额，没收到就填 0。</p>
+    <p>3. 待收尾款 = 报价 − 定金 − 尾款 − 抹零，自动算，不用管；数字大于 0 会自动亮黄提示。</p>
+    <p>4. 订单状态只有三个，按下拉选：<b>已收定金-待制作</b> → <b>已收尾款-待发货</b> → <b>已完成</b>。</p>
+    <p>5. 客人尾款抹零头时，把抹掉的金额填进「抹零/优惠」，订单就能正常结清，利润统计也准确。</p>
+    <p>6. 同一笔定金/尾款记得在「收支明细」也记一行，两页才对得上。</p>
+    <p class="nt" style="margin-top:10px">📷 成品照片 &amp; 订单截图</p>
+    <p>7. 做好一个包就在编辑订单里「成品照片」传几张，会存进这单里，列表上能看到缩略图，点一下放大。</p>
+    <p>8. 要收尾款时，点订单右边的 <b>📸</b>（或在编辑页点「生成订单截图」），会生成一张<b>订单详情图</b>：客户、编号、款式、金额、待补尾款、成品照片都在上面。</p>
+    <p>9. 点「保存到相册」存进手机相册，再把图发给客人确认。若没自动存进相册，可长按图片选「保存图片」。</p>
+    <p>10. 图片存不下来、或想直接发文字，可以点「复制文字版」，粘到微信发给她。</p>
+  </div>
+</div>
+<div class="panel" id="panel-cash">
+  <div class="kpis" id="cashKpis">
+    <div class="kpi"><div class="lab">总支出</div><div class="val exp">¥0.00</div></div>
+    <div class="kpi"><div class="lab">总收入</div><div class="val inc">¥0.00</div></div>
+    <div class="kpi"><div class="lab">采购成本（布料+耗材+工具）</div><div class="val exp">¥0.00</div></div>
+    <div class="kpi"><div class="lab">发货运费</div><div class="val exp">¥0.00</div></div></div>
+  <div class="card">
+    <div class="card-hd hd-green"><span>流水列表</span><span id="cashCount" style="font-weight:400;font-size:12px;color:#7A8B82">共 0 条</span></div>
+    <div id="cashList"><div class="empty"><span class="big">💰</span>还没有流水记录<br>点下方「+ 记一笔」开始记账</div></div>
+  </div>
+  <div class="notes">
+    <p class="nt">📝 收支明细怎么用</p>
+    <p>1. 每一笔真实现金流记一行：买一次布一行、收到定金一行、尾款一行。</p>
+    <p>2. 支出填「支出金额」，收入填「收入金额」，<b>全部填正数</b>，同一行只填一边。</p>
+    <p>3. <b>收入永远填实际到账的钱。</b>客人尾款抹掉零头、实付 41 就填 41；差的那 0.7 回到订单里填「抹零/优惠」，账就平了。</p>
+    <p>4. 运费规则：不用每个包裹单独记！每周发货结束，把这周快递总运费记 1 行，说明写「第几周，共 XX 个包裹」。</p>
+    <p>5. 买布、辅料、工具都算支出；贵的工具在备注里写明，一次性计入当月成本。</p>
+    <p>6. 退款/退货在备注注明，并从对应收入中冲减，避免利润虚高。</p>
+  </div>
+</div>
+<div class="panel" id="panel-summary">
+  <div id="glBox"><div class="gl">
+      <div class="gl-hd"><span class="t">📈 全程总账</span><span class="r">还没有数据</span></div>
+      <div class="gl-empty">从你登记第一笔账开始，这里会自动累计<br>一共有多少收入、花了多少、净赚了多少</div>
+    </div></div>
+  <div class="kpis" id="sumKpis">
+    <div class="kpi wide">
+      <div class="lab">累计净利润（总收入 − 总支出）</div>
+      <div class="val inc hl">¥0.00</div>
+    </div>
+    <div class="kpi"><div class="lab">累计收入</div><div class="val inc">¥0.00</div></div>
+    <div class="kpi"><div class="lab">累计支出</div><div class="val exp">¥0.00</div></div></div>
+  <div class="card">
+    <div class="card-hd hd-blue"><span>按月统计（自动计算）</span></div>
+    <div id="sumList"><div class="empty"><span class="big">📊</span>还没有数据<br>先在「订单台账」或「收支明细」记上一笔<br>这里会自动统计</div></div>
+  </div>
+  <div class="notes">
+    <p class="nt">📝 月度汇总怎么用</p>
+    <p>1. 本页无需填写，数字全部根据「订单台账」和「收支明细」自动计算。</p>
+    <p>2. 最上面的「全程总账」是从你登记的第一笔账算到此时此刻的累计数，每记一笔就会自动更新。</p>
+    <p>3. 总采购成本 = 布料 + 耗材辅料 + 工具；总发货运费 = 每周合并发货运费；总收入 = 定金 + 尾款。</p>
+    <p>4. 净利润 = 总收入 −（采购成本 + 运费），绿色为盈利、红色为亏损。</p>
+    <p>5. 订单情况显示当月新增订单、已完成订单、月末待收尾款合计。</p>
+    <p>6. 想留档或发给别人，点底部「导出 Excel」下载 .xlsx 文件。</p>
+  </div>
+</div>
+<div class="fab">
+  <button class="btn btn-pri" id="addBtn">+ 记一笔订单</button>
+  <button class="btn btn-sec" id="exportBtn">导出 Excel</button>
+  <button class="btn btn-sec" id="menuBtn">更多</button>
+</div>
+<div class="sheet" id="sheet">
+  <div class="sheet-in" id="sheetIn"></div>
+</div>
+<div id="toast"></div>
 </template>
