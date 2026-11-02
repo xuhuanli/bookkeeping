@@ -29,3 +29,6 @@ __pycache__/
 
 # One-click launcher: machine-specific runtimes and setup cache
 /.runtime/
+
+# WorkBuddy assistant workspace data
+/.workbuddy/
